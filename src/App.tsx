@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BrowserRouter,
   Navigate,
@@ -6,7 +6,6 @@ import {
   Route,
   Routes,
   useLocation,
-  useNavigate,
 } from "react-router-dom";
 
 import DispatchCircuits from "./pages/DispatchCircuits";
@@ -19,49 +18,14 @@ import { circuitSupabase } from "./lib/circuitSupabase";
 import "./styles.css";
 
 const SUITE_GB_URL = "https://suite.groupebreton.com";
-const SUITE_SUPABASE_URL =
-  import.meta.env.VITE_SUITE_SUPABASE_URL ||
-  "https://zvzehhzjoaehlvoraatt.supabase.co";
-
-async function connectWithSsoTicket(ticket: string) {
-  const response = await fetch(
-    `${SUITE_SUPABASE_URL}/functions/v1/validate-sso-ticket`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        ticket,
-        module_key: "circuits",
-      }),
-    }
-  );
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok || data?.success === false) {
-    throw new Error(data?.error || "Ticket SSO invalide.");
-  }
-
-  if (!data?.access_token || !data?.refresh_token) {
-    throw new Error("Session SSO manquante.");
-  }
-
-  const { error } = await circuitSupabase.auth.setSession({
-    access_token: data.access_token,
-    refresh_token: data.refresh_token,
-  });
-
-  if (error) {
-    throw error;
-  }
-}
 
 async function restoreSessionFromHash() {
   const hash = window.location.hash;
 
-  if (!hash.includes("access_token") || !hash.includes("refresh_token")) {
+  if (
+    !hash.includes("access_token") ||
+    !hash.includes("refresh_token")
+  ) {
     return;
   }
 
@@ -85,13 +49,145 @@ async function restoreSessionFromHash() {
   window.history.replaceState(
     null,
     "",
-    `${window.location.pathname}${window.location.search}`
+    `${window.location.pathname}${window.location.search}`,
   );
 }
 
-function AppShell({ onLogout }: { onLogout: () => void | Promise<void> }) {
-  const linkClass = ({ isActive }: { isActive: boolean }) =>
-    "navlink" + (isActive ? " navlink-active" : "");
+async function exchangeSuiteSso(ticket: string) {
+  const { data, error } = await circuitSupabase.functions.invoke(
+    "exchange-suite-sso",
+    {
+      body: {
+        ticket,
+        module_key: "circuits",
+        redirectTo:
+          "https://circuits.groupebreton.com/admin/circuits",
+      },
+    },
+  );
+
+  if (error || data?.success === false) {
+    throw new Error(
+      data?.error ||
+        error?.message ||
+        "SSO Circuits impossible.",
+    );
+  }
+
+  if (!data?.action_link) {
+    throw new Error("Lien de connexion Circuits manquant.");
+  }
+
+  window.location.href = data.action_link;
+}
+
+function SsoBootstrap({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const location = useLocation();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+
+    async function init() {
+      try {
+        const params = new URLSearchParams(
+          window.location.search,
+        );
+        const ssoTicket = params.get("sso");
+
+        if (ssoTicket) {
+          const lockKey = `sso_circuits_${ssoTicket}`;
+
+          if (sessionStorage.getItem(lockKey)) {
+            window.history.replaceState(
+              null,
+              "",
+              window.location.pathname,
+            );
+          } else {
+            sessionStorage.setItem(lockKey, "1");
+
+            window.history.replaceState(
+              null,
+              "",
+              window.location.pathname,
+            );
+
+            await exchangeSuiteSso(ssoTicket);
+            return;
+          }
+        }
+
+        await restoreSessionFromHash();
+
+        const { data, error: sessionError } =
+          await circuitSupabase.auth.getSession();
+
+        if (!alive) return;
+
+        if (sessionError || !data.session) {
+          setLoading(false);
+
+          setTimeout(() => {
+            window.location.href = SUITE_GB_URL;
+          }, 500);
+
+          return;
+        }
+
+        setLoading(false);
+      } catch (err) {
+        console.error("SSO CIRCUITS ERROR", err);
+
+        if (!alive) return;
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Connexion SSO impossible.",
+        );
+        setLoading(false);
+
+        setTimeout(() => {
+          window.location.href = SUITE_GB_URL;
+        }, 2500);
+      }
+    }
+
+    void init();
+
+    return () => {
+      alive = false;
+    };
+  }, [location.search]);
+
+  if (loading) {
+    return <div style={{ padding: 16 }}>Connexion en cours…</div>;
+  }
+
+  if (error) {
+    return <div style={{ padding: 16 }}>{error}</div>;
+  }
+
+  return <>{children}</>;
+}
+
+function AppShell() {
+  const linkClass = ({
+    isActive,
+  }: {
+    isActive: boolean;
+  }) => "navlink" + (isActive ? " navlink-active" : "");
+
+  async function logout() {
+    await circuitSupabase.auth.signOut();
+    window.location.href = SUITE_GB_URL;
+  }
 
   return (
     <div className="app-shell">
@@ -109,7 +205,10 @@ function AppShell({ onLogout }: { onLogout: () => void | Promise<void> }) {
         </div>
 
         <div className="section">
-          <NavLink to="/admin/circuits" className={linkClass}>
+          <NavLink
+            to="/admin/circuits"
+            className={linkClass}
+          >
             Circuits scolaires
           </NavLink>
         </div>
@@ -127,7 +226,11 @@ function AppShell({ onLogout }: { onLogout: () => void | Promise<void> }) {
         </div>
 
         <div className="section">
-          <button className="logout-btn" onClick={onLogout} type="button">
+          <button
+            className="logout-btn"
+            type="button"
+            onClick={logout}
+          >
             Se déconnecter
           </button>
         </div>
@@ -135,153 +238,80 @@ function AppShell({ onLogout }: { onLogout: () => void | Promise<void> }) {
 
       <main className="content">
         <Routes>
-          <Route index element={<Navigate to="/admin/circuits" replace />} />
-          <Route path="circuits" element={<DispatchCircuits />} />
+          <Route
+            index
+            element={
+              <Navigate to="/admin/circuits" replace />
+            }
+          />
+
+          <Route
+            path="circuits"
+            element={<DispatchCircuits />}
+          />
+
           <Route
             path="circuits/import-busplanner"
             element={<ImportBusPlanner />}
           />
-          <Route path="circuits/:id" element={<DispatchCircuitDetail />} />
-          <Route path="circuits/:id/map" element={<DispatchCircuitMap />} />
-          <Route path="circuits/:id/print" element={<DispatchCircuitPrint />} />
+
+          <Route
+            path="circuits/:id"
+            element={<DispatchCircuitDetail />}
+          />
+
+          <Route
+            path="circuits/:id/map"
+            element={<DispatchCircuitMap />}
+          />
+
+          <Route
+            path="circuits/:id/print"
+            element={<DispatchCircuitPrint />}
+          />
+
           <Route
             path="circuits/:id/stops/:stopId/note"
             element={<DispatchStopNote />}
           />
-          <Route path="*" element={<Navigate to="/admin/circuits" replace />} />
+
+          <Route
+            path="*"
+            element={
+              <Navigate to="/admin/circuits" replace />
+            }
+          />
         </Routes>
       </main>
     </div>
   );
 }
 
-function AuthenticatedApp() {
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const [loading, setLoading] = useState(true);
-  const [isAuthed, setIsAuthed] = useState(false);
-  const [ssoError, setSsoError] = useState("");
-
-  const pathRef = useRef(location.pathname);
-
-  const DEV_BYPASS =
-    import.meta.env.DEV && import.meta.env.VITE_DEV_BYPASS === "true";
-
-  useEffect(() => {
-    pathRef.current = location.pathname;
-  }, [location.pathname]);
-
-  useEffect(() => {
-    let alive = true;
-
-    async function init() {
-      try {
-        const params = new URLSearchParams(window.location.search);
-        const ssoTicket = params.get("sso");
-
-        if (ssoTicket) {
-          await connectWithSsoTicket(ssoTicket);
-
-          if (!alive) return;
-
-          window.history.replaceState(null, "", "/admin/circuits");
-          navigate("/admin/circuits", { replace: true });
-
-          setIsAuthed(true);
-          setLoading(false);
-          return;
-        }
-
-        await restoreSessionFromHash();
-
-        const { data, error } = await circuitSupabase.auth.getSession();
-
-        if (!alive) return;
-
-        if (error || !data.session) {
-          setIsAuthed(false);
-          setLoading(false);
-
-          setTimeout(() => {
-            window.location.href = SUITE_GB_URL;
-          }, 500);
-
-          return;
-        }
-
-        setIsAuthed(true);
-        setLoading(false);
-      } catch (error) {
-        console.error(error);
-
-        if (!alive) return;
-
-        setSsoError(
-          error instanceof Error ? error.message : "Connexion SSO impossible."
-        );
-        setIsAuthed(false);
-        setLoading(false);
-
-        setTimeout(() => {
-          window.location.href = SUITE_GB_URL;
-        }, 1800);
-      }
-    }
-
-    void init();
-
-    const { data: authListener } =
-      circuitSupabase.auth.onAuthStateChange((_event, session) => {
-        if (!alive) return;
-
-        if (!session) {
-          setIsAuthed(false);
-          return;
-        }
-
-        setIsAuthed(true);
-        setLoading(false);
-      });
-
-    return () => {
-      alive = false;
-      authListener.subscription.unsubscribe();
-    };
-  }, [navigate]);
-
-  async function logout() {
-    await circuitSupabase.auth.signOut();
-    window.location.href = SUITE_GB_URL;
-  }
-
-  if (DEV_BYPASS) {
-    return <AppShell onLogout={() => {}} />;
-  }
-
-  if (loading) {
-    return <div style={{ padding: 16 }}>Connexion en cours…</div>;
-  }
-
-  if (!isAuthed) {
-    return (
-      <div style={{ padding: 16 }}>
-        {ssoError || "Redirection vers Suite GB…"}
-      </div>
-    );
-  }
-
-  return <AppShell onLogout={logout} />;
-}
-
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/admin/*" element={<AuthenticatedApp />} />
-        <Route path="/" element={<Navigate to="/admin/circuits" replace />} />
-        <Route path="*" element={<Navigate to="/admin/circuits" replace />} />
-      </Routes>
+      <SsoBootstrap>
+        <Routes>
+          <Route
+            path="/admin/*"
+            element={<AppShell />}
+          />
+
+          <Route
+            path="/"
+            element={
+              <Navigate to="/admin/circuits" replace />
+            }
+          />
+
+          <Route
+            path="*"
+            element={
+              <Navigate to="/admin/circuits" replace />
+            }
+          />
+        </Routes>
+      </SsoBootstrap>
     </BrowserRouter>
   );
 }
