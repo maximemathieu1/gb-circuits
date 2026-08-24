@@ -1408,17 +1408,6 @@ export default function CircuitsScolairesPage() {
           </div>
         </div>
 
-        <div className="page-actions">
-          <button
-            className="btn-primary"
-            type="button"
-            onClick={
-              ouvrirAjoutCircuit
-            }
-          >
-            + Ajouter un circuit
-          </button>
-        </div>
       </div>
 
       {/* FILTRES */}
@@ -1632,6 +1621,14 @@ export default function CircuitsScolairesPage() {
               Double-clic sur un circuit pour ouvrir sa fiche.
             </div>
           </div>
+
+          <button
+            className="btn-primary"
+            type="button"
+            onClick={ouvrirAjoutCircuit}
+          >
+            + Ajouter un circuit
+          </button>
         </div>
 
         <div className="table-wrap">
