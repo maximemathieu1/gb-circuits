@@ -721,3 +721,13 @@ textarea.input {
     width: 100%;
   }
 }
+
+.sortable-head {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sortable-head:hover {
+  color: #1e40af;
+  background: #f8fafc;
+}

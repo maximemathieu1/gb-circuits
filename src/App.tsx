@@ -8,12 +8,15 @@ import {
   useLocation,
 } from "react-router-dom";
 
+import CircuitsScolairesPage from "./pages/CircuitsScolairesPage";
+
 import DispatchCircuits from "./pages/DispatchCircuits";
 import DispatchCircuitDetail from "./pages/DispatchCircuitDetail";
 import DispatchCircuitMap from "./pages/DispatchCircuitMap";
 import DispatchCircuitPrint from "./pages/DispatchCircuitPrint";
 import DispatchStopNote from "./pages/DispatchStopNote";
 import ImportBusPlanner from "./pages/ImportBusPlanner";
+
 import { circuitSupabase } from "./lib/circuitSupabase";
 import "./styles.css";
 
@@ -61,7 +64,7 @@ async function exchangeSuiteSso(ticket: string) {
         ticket,
         module_key: "circuits",
         redirectTo:
-          "https://circuits.groupebreton.com/admin/circuits",
+          "https://circuits.groupebreton.com/admin/circuits-scolaires",
       },
     },
   );
@@ -206,19 +209,22 @@ function AppShell() {
 
         <div className="section">
           <NavLink
-            to="/admin/circuits"
+            to="/admin/circuits-scolaires"
             className={linkClass}
           >
-            Circuits scolaires
+            Circuits scolaire
+          </NavLink>
+
+          <NavLink
+            to="/admin/circuit-tablette-gps"
+            className={linkClass}
+          >
+            Circuit Tablette GPS
           </NavLink>
         </div>
 
         <div className="section">
-          <div className="section-title">À venir</div>
-
-          <div className="navlink" style={{ opacity: 0.45 }}>
-            Circuits tablette
-          </div>
+          <div className="section-title">Système</div>
 
           <div className="navlink" style={{ opacity: 0.45 }}>
             Paramètres
@@ -241,44 +247,61 @@ function AppShell() {
           <Route
             index
             element={
-              <Navigate to="/admin/circuits" replace />
+              <Navigate
+                to="/admin/circuits-scolaires"
+                replace
+              />
             }
           />
 
+          {/* =========================
+              CIRCUITS SCOLAIRE
+          ========================== */}
           <Route
-            path="circuits"
+            path="circuits-scolaires"
+            element={<CircuitsScolairesPage />}
+          />
+
+          {/* =========================
+              CIRCUIT TABLETTE GPS
+          ========================== */}
+          <Route
+            path="circuit-tablette-gps"
             element={<DispatchCircuits />}
           />
 
           <Route
-            path="circuits/import-busplanner"
+            path="circuit-tablette-gps/import-busplanner"
             element={<ImportBusPlanner />}
           />
 
           <Route
-            path="circuits/:id"
+            path="circuit-tablette-gps/:id"
             element={<DispatchCircuitDetail />}
           />
 
           <Route
-            path="circuits/:id/map"
+            path="circuit-tablette-gps/:id/map"
             element={<DispatchCircuitMap />}
           />
 
           <Route
-            path="circuits/:id/print"
+            path="circuit-tablette-gps/:id/print"
             element={<DispatchCircuitPrint />}
           />
 
           <Route
-            path="circuits/:id/stops/:stopId/note"
+            path="circuit-tablette-gps/:id/stops/:stopId/note"
             element={<DispatchStopNote />}
           />
 
           <Route
             path="*"
             element={
-              <Navigate to="/admin/circuits" replace />
+              <Navigate
+                to="/admin/circuits-scolaires"
+                replace
+              />
             }
           />
         </Routes>
@@ -300,14 +323,20 @@ export default function App() {
           <Route
             path="/"
             element={
-              <Navigate to="/admin/circuits" replace />
+              <Navigate
+                to="/admin/circuits-scolaires"
+                replace
+              />
             }
           />
 
           <Route
             path="*"
             element={
-              <Navigate to="/admin/circuits" replace />
+              <Navigate
+                to="/admin/circuits-scolaires"
+                replace
+              />
             }
           />
         </Routes>
