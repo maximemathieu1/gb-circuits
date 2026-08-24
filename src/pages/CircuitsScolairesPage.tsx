@@ -36,6 +36,7 @@ type CircuitScolaire = {
 type ContactUrgence = {
   id: string;
   organisation: Organisation;
+  organisationAutre: string;
   nom: string;
   fonction: string;
   telephone: string;
@@ -115,6 +116,7 @@ const circuitVide: Omit<CircuitScolaire, "id"> = {
 
 const contactVide: Omit<ContactUrgence, "id"> = {
   organisation: "Groupe Breton",
+  organisationAutre: "",
   nom: "",
   fonction: "",
   telephone: "",
@@ -143,8 +145,10 @@ function dossierCompagnie(compagnie: Compagnie) {
   switch (compagnie) {
     case "Autobus Breton":
       return "breton";
+
     case "Autobus Champagne":
       return "champagne";
+
     case "Transport Sécuritaire":
       return "securitaire";
   }
@@ -159,7 +163,11 @@ function nettoyerNomFichier(value: string) {
 
 function formatTaille(bytes: number) {
   if (bytes < 1024) return `${bytes} o`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} Ko`;
+
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} Ko`;
+  }
+
   return `${(bytes / 1024 / 1024).toFixed(1)} Mo`;
 }
 
@@ -167,7 +175,16 @@ function typeCourt(mime: string) {
   if (mime.includes("pdf")) return "PDF";
   if (mime.includes("image")) return "Image";
   if (mime.includes("text")) return "Texte";
+
   return "Fichier";
+}
+
+function nomOrganisation(contact: ContactUrgence) {
+  if (contact.organisation === "Autre") {
+    return contact.organisationAutre.trim() || "Autre";
+  }
+
+  return contact.organisation;
 }
 
 export default function CircuitsScolairesPage() {
@@ -209,7 +226,9 @@ export default function CircuitsScolairesPage() {
       documents: [],
     });
 
-  const [dragActif, setDragActif] = useState(false);
+  const [dragActif, setDragActif] =
+    useState(false);
+
   const [operationEnCours, setOperationEnCours] =
     useState(false);
 
@@ -224,14 +243,18 @@ export default function CircuitsScolairesPage() {
     useState<string | null>(null);
 
   const [contactForm, setContactForm] =
-    useState<Omit<ContactUrgence, "id">>(contactVide);
+    useState<Omit<ContactUrgence, "id">>(
+      contactVide
+    );
 
   /*
    * REMPLAÇANT
    */
 
-  const [modalRemplacantOuvert, setModalRemplacantOuvert] =
-    useState(false);
+  const [
+    modalRemplacantOuvert,
+    setModalRemplacantOuvert,
+  ] = useState(false);
 
   const [remplacantActifId, setRemplacantActifId] =
     useState<string | null>(null);
@@ -256,43 +279,68 @@ export default function CircuitsScolairesPage() {
     }
   }
 
-  function indicateurTri(colonne: ColonneTriCircuit) {
+  function indicateurTri(
+    colonne: ColonneTriCircuit
+  ) {
     if (tri !== colonne) return "";
-    return direction === "asc" ? " ↑" : " ↓";
+
+    return direction === "asc"
+      ? " ↑"
+      : " ↓";
   }
 
   const circuitsFiltres = useMemo(() => {
-    const q = recherche.trim().toLowerCase();
+    const q = recherche
+      .trim()
+      .toLowerCase();
 
-    const resultat = circuits.filter((item) => {
-      const okCompagnie =
-        compagnie === "Toutes" ||
-        item.compagnie === compagnie;
+    const resultat = circuits.filter(
+      (item) => {
+        const okCompagnie =
+          compagnie === "Toutes" ||
+          item.compagnie === compagnie;
 
-      const okRecherche =
-        !q ||
-        item.circuit.toLowerCase().includes(q) ||
-        item.unite.toLowerCase().includes(q) ||
-        item.nomConducteur.toLowerCase().includes(q) ||
-        item.telephone.toLowerCase().includes(q) ||
-        item.localisation.toLowerCase().includes(q) ||
-        item.compagnie.toLowerCase().includes(q);
+        const okRecherche =
+          !q ||
+          item.circuit
+            .toLowerCase()
+            .includes(q) ||
+          item.unite
+            .toLowerCase()
+            .includes(q) ||
+          item.nomConducteur
+            .toLowerCase()
+            .includes(q) ||
+          item.telephone
+            .toLowerCase()
+            .includes(q) ||
+          item.localisation
+            .toLowerCase()
+            .includes(q) ||
+          item.compagnie
+            .toLowerCase()
+            .includes(q);
 
-      return okCompagnie && okRecherche;
-    });
+        return okCompagnie && okRecherche;
+      }
+    );
 
     resultat.sort((a, b) => {
-      const valeurA = a[tri].toLowerCase();
-      const valeurB = b[tri].toLowerCase();
+      const valeurA =
+        a[tri].toLowerCase();
 
-      const comparaison = valeurA.localeCompare(
-        valeurB,
-        "fr",
-        {
-          numeric: true,
-          sensitivity: "base",
-        }
-      );
+      const valeurB =
+        b[tri].toLowerCase();
+
+      const comparaison =
+        valeurA.localeCompare(
+          valeurB,
+          "fr",
+          {
+            numeric: true,
+            sensitivity: "base",
+          }
+        );
 
       return direction === "asc"
         ? comparaison
@@ -300,15 +348,25 @@ export default function CircuitsScolairesPage() {
     });
 
     return resultat;
-  }, [circuits, recherche, compagnie, tri, direction]);
+  }, [
+    circuits,
+    recherche,
+    compagnie,
+    tri,
+    direction,
+  ]);
 
-  const remplacantsFiltres = useMemo(() => {
-    if (compagnie === "Toutes") return remplacants;
+  const remplacantsFiltres =
+    useMemo(() => {
+      if (compagnie === "Toutes") {
+        return remplacants;
+      }
 
-    return remplacants.filter(
-      (item) => item.compagnie === compagnie
-    );
-  }, [remplacants, compagnie]);
+      return remplacants.filter(
+        (item) =>
+          item.compagnie === compagnie
+      );
+    }, [remplacants, compagnie]);
 
   /*
    * CIRCUITS CRUD
@@ -337,11 +395,14 @@ export default function CircuitsScolairesPage() {
     setCircuitForm({
       circuit: circuit.circuit,
       unite: circuit.unite,
-      nomConducteur: circuit.nomConducteur,
+      nomConducteur:
+        circuit.nomConducteur,
       telephone: circuit.telephone,
-      localisation: circuit.localisation,
+      localisation:
+        circuit.localisation,
       compagnie: circuit.compagnie,
-      documents: circuit.documents || [],
+      documents:
+        circuit.documents || [],
     });
 
     setModalCircuitOuvert(true);
@@ -362,25 +423,35 @@ export default function CircuitsScolairesPage() {
   }
 
   function enregistrerCircuit() {
-    const numero = circuitForm.circuit.trim();
+    const numero =
+      circuitForm.circuit.trim();
 
     if (!numero) {
-      alert("Le numéro de circuit est obligatoire.");
+      alert(
+        "Le numéro de circuit est obligatoire."
+      );
       return;
     }
 
-    const circuitSauvegarde: CircuitScolaire = {
-      id: circuitActifId || creerId(),
-      circuit: numero,
-      unite: circuitForm.unite.trim(),
-      nomConducteur:
-        circuitForm.nomConducteur.trim(),
-      telephone: circuitForm.telephone.trim(),
-      localisation:
-        circuitForm.localisation.trim(),
-      compagnie: circuitForm.compagnie,
-      documents: circuitForm.documents,
-    };
+    const circuitSauvegarde: CircuitScolaire =
+      {
+        id:
+          circuitActifId ||
+          creerId(),
+        circuit: numero,
+        unite:
+          circuitForm.unite.trim(),
+        nomConducteur:
+          circuitForm.nomConducteur.trim(),
+        telephone:
+          circuitForm.telephone.trim(),
+        localisation:
+          circuitForm.localisation.trim(),
+        compagnie:
+          circuitForm.compagnie,
+        documents:
+          circuitForm.documents,
+      };
 
     if (circuitActifId) {
       setCircuits((prev) =>
@@ -412,21 +483,24 @@ export default function CircuitsScolairesPage() {
     try {
       setOperationEnCours(true);
 
-      const paths = circuitForm.documents.map(
-        (doc) => doc.storagePath
-      );
+      const paths =
+        circuitForm.documents.map(
+          (doc) => doc.storagePath
+        );
 
       if (paths.length > 0) {
-        const { error } = await circuitSupabase.storage
-          .from(BUCKET_DOCUMENTS)
-          .remove(paths);
+        const { error } =
+          await circuitSupabase.storage
+            .from(BUCKET_DOCUMENTS)
+            .remove(paths);
 
         if (error) throw error;
       }
 
       setCircuits((prev) =>
         prev.filter(
-          (item) => item.id !== circuitActifId
+          (item) =>
+            item.id !== circuitActifId
         )
       );
 
@@ -439,7 +513,10 @@ export default function CircuitsScolairesPage() {
       });
     } catch (error) {
       console.error(error);
-      alert("Erreur pendant la suppression du circuit.");
+
+      alert(
+        "Erreur pendant la suppression du circuit."
+      );
     } finally {
       setOperationEnCours(false);
     }
@@ -469,16 +546,19 @@ export default function CircuitsScolairesPage() {
     try {
       setOperationEnCours(true);
 
-      const nouveauxDocuments: CircuitDocument[] = [];
+      const nouveauxDocuments:
+        CircuitDocument[] = [];
 
       for (const file of liste) {
-        const dossier = dossierCompagnie(
-          circuitForm.compagnie
-        );
+        const dossier =
+          dossierCompagnie(
+            circuitForm.compagnie
+          );
 
-        const nomNettoye = nettoyerNomFichier(
-          file.name
-        );
+        const nomNettoye =
+          nettoyerNomFichier(
+            file.name
+          );
 
         const storagePath =
           `circuits-scolaires/${dossier}/` +
@@ -488,25 +568,32 @@ export default function CircuitsScolairesPage() {
         const { error } =
           await circuitSupabase.storage
             .from(BUCKET_DOCUMENTS)
-            .upload(storagePath, file, {
-              contentType:
-                file.type ||
-                "application/octet-stream",
-              upsert: false,
-            });
+            .upload(
+              storagePath,
+              file,
+              {
+                contentType:
+                  file.type ||
+                  "application/octet-stream",
+                upsert: false,
+              }
+            );
 
         if (error) throw error;
 
         const { data } =
           circuitSupabase.storage
             .from(BUCKET_DOCUMENTS)
-            .getPublicUrl(storagePath);
+            .getPublicUrl(
+              storagePath
+            );
 
         nouveauxDocuments.push({
           id: creerId(),
           nom: file.name,
           storagePath,
-          publicUrl: data.publicUrl,
+          publicUrl:
+            data.publicUrl,
           mimeType:
             file.type ||
             "application/octet-stream",
@@ -547,15 +634,19 @@ export default function CircuitsScolairesPage() {
       const { error } =
         await circuitSupabase.storage
           .from(BUCKET_DOCUMENTS)
-          .remove([document.storagePath]);
+          .remove([
+            document.storagePath,
+          ]);
 
       if (error) throw error;
 
       setCircuitForm((prev) => ({
         ...prev,
-        documents: prev.documents.filter(
-          (doc) => doc.id !== document.id
-        ),
+        documents:
+          prev.documents.filter(
+            (doc) =>
+              doc.id !== document.id
+          ),
       }));
     } catch (error) {
       console.error(error);
@@ -584,7 +675,11 @@ export default function CircuitsScolairesPage() {
 
   function ouvrirAjoutContact() {
     setContactActifId(null);
-    setContactForm(contactVide);
+
+    setContactForm({
+      ...contactVide,
+    });
+
     setModalContactOuvert(true);
   }
 
@@ -594,11 +689,15 @@ export default function CircuitsScolairesPage() {
     setContactActifId(contact.id);
 
     setContactForm({
-      organisation: contact.organisation,
+      organisation:
+        contact.organisation,
+      organisationAutre:
+        contact.organisationAutre || "",
       nom: contact.nom,
       fonction: contact.fonction,
       telephone: contact.telephone,
-      telephone2: contact.telephone2,
+      telephone2:
+        contact.telephone2,
       notes: contact.notes,
     });
 
@@ -608,11 +707,15 @@ export default function CircuitsScolairesPage() {
   function fermerModalContact() {
     setModalContactOuvert(false);
     setContactActifId(null);
-    setContactForm(contactVide);
+
+    setContactForm({
+      ...contactVide,
+    });
   }
 
   function enregistrerContact() {
-    const nom = contactForm.nom.trim();
+    const nom =
+      contactForm.nom.trim();
 
     if (!nom) {
       alert(
@@ -621,19 +724,46 @@ export default function CircuitsScolairesPage() {
       return;
     }
 
-    const contactSauvegarde: ContactUrgence = {
-      id: contactActifId || creerId(),
-      organisation:
-        contactForm.organisation,
-      nom,
-      fonction:
-        contactForm.fonction.trim(),
-      telephone:
-        contactForm.telephone.trim(),
-      telephone2:
-        contactForm.telephone2.trim(),
-      notes: contactForm.notes.trim(),
-    };
+    if (
+      contactForm.organisation ===
+        "Autre" &&
+      !contactForm.organisationAutre.trim()
+    ) {
+      alert(
+        "Inscris le nom de l’organisation."
+      );
+      return;
+    }
+
+    const contactSauvegarde: ContactUrgence =
+      {
+        id:
+          contactActifId ||
+          creerId(),
+
+        organisation:
+          contactForm.organisation,
+
+        organisationAutre:
+          contactForm.organisation ===
+          "Autre"
+            ? contactForm.organisationAutre.trim()
+            : "",
+
+        nom,
+
+        fonction:
+          contactForm.fonction.trim(),
+
+        telephone:
+          contactForm.telephone.trim(),
+
+        telephone2:
+          contactForm.telephone2.trim(),
+
+        notes:
+          contactForm.notes.trim(),
+      };
 
     if (contactActifId) {
       setContacts((prev) =>
@@ -666,7 +796,8 @@ export default function CircuitsScolairesPage() {
 
     setContacts((prev) =>
       prev.filter(
-        (item) => item.id !== contactActifId
+        (item) =>
+          item.id !== contactActifId
       )
     );
 
@@ -694,12 +825,16 @@ export default function CircuitsScolairesPage() {
   function ouvrirModificationRemplacant(
     remplacant: ConducteurRemplacant
   ) {
-    setRemplacantActifId(remplacant.id);
+    setRemplacantActifId(
+      remplacant.id
+    );
 
     setRemplacantForm({
       nom: remplacant.nom,
-      telephone: remplacant.telephone,
-      compagnie: remplacant.compagnie,
+      telephone:
+        remplacant.telephone,
+      compagnie:
+        remplacant.compagnie,
     });
 
     setModalRemplacantOuvert(true);
@@ -708,11 +843,15 @@ export default function CircuitsScolairesPage() {
   function fermerModalRemplacant() {
     setModalRemplacantOuvert(false);
     setRemplacantActifId(null);
-    setRemplacantForm(remplacantVide);
+
+    setRemplacantForm({
+      ...remplacantVide,
+    });
   }
 
   function enregistrerRemplacant() {
-    const nom = remplacantForm.nom.trim();
+    const nom =
+      remplacantForm.nom.trim();
 
     if (!nom) {
       alert(
@@ -721,19 +860,26 @@ export default function CircuitsScolairesPage() {
       return;
     }
 
-    const sauvegarde: ConducteurRemplacant = {
-      id: remplacantActifId || creerId(),
-      nom,
-      telephone:
-        remplacantForm.telephone.trim(),
-      compagnie:
-        remplacantForm.compagnie,
-    };
+    const sauvegarde: ConducteurRemplacant =
+      {
+        id:
+          remplacantActifId ||
+          creerId(),
+
+        nom,
+
+        telephone:
+          remplacantForm.telephone.trim(),
+
+        compagnie:
+          remplacantForm.compagnie,
+      };
 
     if (remplacantActifId) {
       setRemplacants((prev) =>
         prev.map((item) =>
-          item.id === remplacantActifId
+          item.id ===
+          remplacantActifId
             ? sauvegarde
             : item
         )
@@ -762,7 +908,8 @@ export default function CircuitsScolairesPage() {
     setRemplacants((prev) =>
       prev.filter(
         (item) =>
-          item.id !== remplacantActifId
+          item.id !==
+          remplacantActifId
       )
     );
 
@@ -807,7 +954,9 @@ export default function CircuitsScolairesPage() {
               className="input"
               value={recherche}
               onChange={(e) =>
-                setRecherche(e.target.value)
+                setRecherche(
+                  e.target.value
+                )
               }
               placeholder="Circuit, unité, conducteur, téléphone ou localisation..."
             />
@@ -900,7 +1049,9 @@ export default function CircuitsScolairesPage() {
                   title="Double-clic pour modifier"
                 >
                   <td>
-                    {contact.organisation}
+                    {nomOrganisation(
+                      contact
+                    )}
                   </td>
 
                   <td>
@@ -910,7 +1061,8 @@ export default function CircuitsScolairesPage() {
                   </td>
 
                   <td>
-                    {contact.fonction || "—"}
+                    {contact.fonction ||
+                      "—"}
                   </td>
 
                   <td>
@@ -923,7 +1075,9 @@ export default function CircuitsScolairesPage() {
                           e.stopPropagation()
                         }
                       >
-                        {contact.telephone}
+                        {
+                          contact.telephone
+                        }
                       </a>
                     ) : (
                       "—"
@@ -940,7 +1094,9 @@ export default function CircuitsScolairesPage() {
                           e.stopPropagation()
                         }
                       >
-                        {contact.telephone2}
+                        {
+                          contact.telephone2
+                        }
                       </a>
                     ) : (
                       "—"
@@ -974,8 +1130,7 @@ export default function CircuitsScolairesPage() {
             </div>
 
             <div className="card-subtitle">
-              Double-clic sur un circuit pour
-              ouvrir sa fiche.
+              Double-clic sur un circuit pour ouvrir sa fiche.
             </div>
           </div>
         </div>
@@ -991,7 +1146,9 @@ export default function CircuitsScolairesPage() {
                   }
                 >
                   Circuit
-                  {indicateurTri("circuit")}
+                  {indicateurTri(
+                    "circuit"
+                  )}
                 </th>
 
                 <th
@@ -1001,7 +1158,9 @@ export default function CircuitsScolairesPage() {
                   }
                 >
                   Unité
-                  {indicateurTri("unite")}
+                  {indicateurTri(
+                    "unite"
+                  )}
                 </th>
 
                 <th
@@ -1021,11 +1180,15 @@ export default function CircuitsScolairesPage() {
                 <th
                   className="sortable-head"
                   onClick={() =>
-                    changerTri("telephone")
+                    changerTri(
+                      "telephone"
+                    )
                   }
                 >
                   Téléphone
-                  {indicateurTri("telephone")}
+                  {indicateurTri(
+                    "telephone"
+                  )}
                 </th>
 
                 <th
@@ -1045,11 +1208,15 @@ export default function CircuitsScolairesPage() {
                 <th
                   className="sortable-head"
                   onClick={() =>
-                    changerTri("compagnie")
+                    changerTri(
+                      "compagnie"
+                    )
                   }
                 >
                   Compagnie
-                  {indicateurTri("compagnie")}
+                  {indicateurTri(
+                    "compagnie"
+                  )}
                 </th>
 
                 <th>Documents</th>
@@ -1057,59 +1224,74 @@ export default function CircuitsScolairesPage() {
             </thead>
 
             <tbody>
-              {circuitsFiltres.map((item) => (
-                <tr
-                  className="row"
-                  key={item.id}
-                  onDoubleClick={() =>
-                    ouvrirModificationCircuit(
-                      item
-                    )
-                  }
-                  title="Double-clic pour modifier"
-                >
-                  <td>
-                    <strong>
-                      {item.circuit}
-                    </strong>
-                  </td>
+              {circuitsFiltres.map(
+                (item) => (
+                  <tr
+                    className="row"
+                    key={item.id}
+                    onDoubleClick={() =>
+                      ouvrirModificationCircuit(
+                        item
+                      )
+                    }
+                    title="Double-clic pour modifier"
+                  >
+                    <td>
+                      <strong>
+                        {item.circuit}
+                      </strong>
+                    </td>
 
-                  <td>{item.unite}</td>
+                    <td>
+                      {item.unite}
+                    </td>
 
-                  <td>
-                    {item.nomConducteur}
-                  </td>
+                    <td>
+                      {
+                        item.nomConducteur
+                      }
+                    </td>
 
-                  <td>
-                    {item.telephone ? (
-                      <a
-                        href={telHref(
-                          item.telephone
-                        )}
-                        onDoubleClick={(e) =>
-                          e.stopPropagation()
-                        }
-                      >
-                        {item.telephone}
-                      </a>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
+                    <td>
+                      {item.telephone ? (
+                        <a
+                          href={telHref(
+                            item.telephone
+                          )}
+                          onDoubleClick={(
+                            e
+                          ) =>
+                            e.stopPropagation()
+                          }
+                        >
+                          {
+                            item.telephone
+                          }
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
 
-                  <td>
-                    {item.localisation}
-                  </td>
+                    <td>
+                      {
+                        item.localisation
+                      }
+                    </td>
 
-                  <td>{item.compagnie}</td>
+                    <td>
+                      {item.compagnie}
+                    </td>
 
-                  <td>
-                    {item.documents.length > 0
-                      ? `${item.documents.length} document(s)`
-                      : "—"}
-                  </td>
-                </tr>
-              ))}
+                    <td>
+                      {item.documents
+                        .length > 0
+                        ? `${item.documents.length} document(s)`
+                        : "—"}
+                    </td>
+                  </tr>
+                )
+              )}
             </tbody>
           </table>
         </div>
@@ -1128,15 +1310,16 @@ export default function CircuitsScolairesPage() {
             </div>
 
             <div className="card-subtitle">
-              Conducteurs disponibles pour les
-              remplacements.
+              Conducteurs disponibles pour les remplacements.
             </div>
           </div>
 
           <button
             className="btn-primary"
             type="button"
-            onClick={ouvrirAjoutRemplacant}
+            onClick={
+              ouvrirAjoutRemplacant
+            }
           >
             + Ajouter un conducteur
           </button>
@@ -1177,11 +1360,15 @@ export default function CircuitsScolairesPage() {
                           href={telHref(
                             item.telephone
                           )}
-                          onDoubleClick={(e) =>
+                          onDoubleClick={(
+                            e
+                          ) =>
                             e.stopPropagation()
                           }
                         >
-                          {item.telephone}
+                          {
+                            item.telephone
+                          }
                         </a>
                       ) : (
                         "—"
@@ -1216,7 +1403,9 @@ export default function CircuitsScolairesPage() {
       {modalCircuitOuvert && (
         <div
           className="modal-backdrop"
-          onMouseDown={fermerModalCircuit}
+          onMouseDown={
+            fermerModalCircuit
+          }
         >
           <div
             className="modal-card"
@@ -1233,16 +1422,19 @@ export default function CircuitsScolairesPage() {
                 </div>
 
                 <div className="muted">
-                  Informations et documents du
-                  circuit scolaire.
+                  Informations et documents du circuit scolaire.
                 </div>
               </div>
 
               <button
                 className="ghost"
                 type="button"
-                onClick={fermerModalCircuit}
-                disabled={operationEnCours}
+                onClick={
+                  fermerModalCircuit
+                }
+                disabled={
+                  operationEnCours
+                }
               >
                 Fermer
               </button>
@@ -1278,7 +1470,9 @@ export default function CircuitsScolairesPage() {
 
                 <input
                   className="input"
-                  value={circuitForm.unite}
+                  value={
+                    circuitForm.unite
+                  }
                   onChange={(e) =>
                     setCircuitForm(
                       (prev) => ({
@@ -1405,10 +1599,16 @@ export default function CircuitsScolairesPage() {
                 ref={inputFichierRef}
                 type="file"
                 multiple
-                accept={fichiersAcceptes}
-                style={{ display: "none" }}
+                accept={
+                  fichiersAcceptes
+                }
+                style={{
+                  display: "none",
+                }}
                 onChange={(e) => {
-                  if (e.target.files) {
+                  if (
+                    e.target.files
+                  ) {
                     void ajouterDocuments(
                       e.target.files
                     );
@@ -1441,6 +1641,7 @@ export default function CircuitsScolairesPage() {
                 }
                 onDrop={(e) => {
                   e.preventDefault();
+
                   setDragActif(false);
 
                   void ajouterDocuments(
@@ -1453,14 +1654,12 @@ export default function CircuitsScolairesPage() {
                 </div>
 
                 <div className="muted">
-                  PDF, images ou fichiers texte.
-                  Clic ou double-clic pour
-                  sélectionner.
+                  PDF, images ou fichiers texte. Clic ou double-clic pour sélectionner.
                 </div>
               </div>
 
-              {circuitForm.documents.length >
-                0 && (
+              {circuitForm.documents
+                .length > 0 && (
                 <div className="documents-list">
                   {circuitForm.documents.map(
                     (doc) => (
@@ -1468,7 +1667,9 @@ export default function CircuitsScolairesPage() {
                         className="document-row"
                         key={doc.id}
                         onDoubleClick={() =>
-                          ouvrirDocument(doc)
+                          ouvrirDocument(
+                            doc
+                          )
                         }
                         title="Double-clic pour ouvrir"
                       >
@@ -1494,6 +1695,7 @@ export default function CircuitsScolairesPage() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
+
                               ouvrirDocument(
                                 doc
                               );
@@ -1534,7 +1736,9 @@ export default function CircuitsScolairesPage() {
                   onClick={() =>
                     void supprimerCircuit()
                   }
-                  disabled={operationEnCours}
+                  disabled={
+                    operationEnCours
+                  }
                 >
                   Supprimer le circuit
                 </button>
@@ -1544,8 +1748,12 @@ export default function CircuitsScolairesPage() {
                 <button
                   className="ghost"
                   type="button"
-                  onClick={fermerModalCircuit}
-                  disabled={operationEnCours}
+                  onClick={
+                    fermerModalCircuit
+                  }
+                  disabled={
+                    operationEnCours
+                  }
                 >
                   Annuler
                 </button>
@@ -1553,8 +1761,12 @@ export default function CircuitsScolairesPage() {
                 <button
                   className="btn-primary"
                   type="button"
-                  onClick={enregistrerCircuit}
-                  disabled={operationEnCours}
+                  onClick={
+                    enregistrerCircuit
+                  }
+                  disabled={
+                    operationEnCours
+                  }
                 >
                   {operationEnCours
                     ? "Traitement..."
@@ -1571,7 +1783,9 @@ export default function CircuitsScolairesPage() {
       {modalContactOuvert && (
         <div
           className="modal-backdrop"
-          onMouseDown={fermerModalContact}
+          onMouseDown={
+            fermerModalContact
+          }
         >
           <div
             className="modal-card"
@@ -1591,7 +1805,9 @@ export default function CircuitsScolairesPage() {
               <button
                 className="ghost"
                 type="button"
-                onClick={fermerModalContact}
+                onClick={
+                  fermerModalContact
+                }
               >
                 Fermer
               </button>
@@ -1615,6 +1831,13 @@ export default function CircuitsScolairesPage() {
                         organisation:
                           e.target
                             .value as Organisation,
+
+                        organisationAutre:
+                          e.target
+                            .value ===
+                          "Autre"
+                            ? prev.organisationAutre
+                            : "",
                       })
                     )
                   }
@@ -1622,20 +1845,52 @@ export default function CircuitsScolairesPage() {
                   <option value="Groupe Breton">
                     Groupe Breton
                   </option>
+
                   <option value="Autobus Breton">
                     Autobus Breton
                   </option>
+
                   <option value="Autobus Champagne">
                     Autobus Champagne
                   </option>
+
                   <option value="Transport Sécuritaire">
                     Transport Sécuritaire
                   </option>
+
                   <option value="Autre">
                     Autre
                   </option>
                 </select>
               </div>
+
+              {contactForm.organisation ===
+                "Autre" && (
+                <div className="field">
+                  <div className="label">
+                    Nom de l’organisation
+                  </div>
+
+                  <input
+                    className="input"
+                    value={
+                      contactForm.organisationAutre
+                    }
+                    onChange={(e) =>
+                      setContactForm(
+                        (prev) => ({
+                          ...prev,
+                          organisationAutre:
+                            e.target
+                              .value,
+                        })
+                      )
+                    }
+                    placeholder="Ex: CSSBE, Ville de Saint-Georges..."
+                    autoFocus
+                  />
+                </div>
+              )}
 
               <div className="field">
                 <div className="label">
@@ -1644,12 +1899,15 @@ export default function CircuitsScolairesPage() {
 
                 <input
                   className="input"
-                  value={contactForm.nom}
+                  value={
+                    contactForm.nom
+                  }
                   onChange={(e) =>
                     setContactForm(
                       (prev) => ({
                         ...prev,
-                        nom: e.target.value,
+                        nom:
+                          e.target.value,
                       })
                     )
                   }
@@ -1733,7 +1991,9 @@ export default function CircuitsScolairesPage() {
 
               <textarea
                 className="input"
-                value={contactForm.notes}
+                value={
+                  contactForm.notes
+                }
                 onChange={(e) =>
                   setContactForm(
                     (prev) => ({
@@ -1751,7 +2011,9 @@ export default function CircuitsScolairesPage() {
                 <button
                   className="btn-danger"
                   type="button"
-                  onClick={supprimerContact}
+                  onClick={
+                    supprimerContact
+                  }
                 >
                   Supprimer
                 </button>
@@ -1761,7 +2023,9 @@ export default function CircuitsScolairesPage() {
                 <button
                   className="ghost"
                   type="button"
-                  onClick={fermerModalContact}
+                  onClick={
+                    fermerModalContact
+                  }
                 >
                   Annuler
                 </button>
@@ -1769,7 +2033,9 @@ export default function CircuitsScolairesPage() {
                 <button
                   className="btn-primary"
                   type="button"
-                  onClick={enregistrerContact}
+                  onClick={
+                    enregistrerContact
+                  }
                 >
                   Enregistrer
                 </button>
@@ -1829,7 +2095,8 @@ export default function CircuitsScolairesPage() {
                     setRemplacantForm(
                       (prev) => ({
                         ...prev,
-                        nom: e.target.value,
+                        nom:
+                          e.target.value,
                       })
                     )
                   }
