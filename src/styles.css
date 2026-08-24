@@ -731,3 +731,60 @@ textarea.input {
   color: #1e40af;
   background: #f8fafc;
 }
+
+.documents-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.document-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.document-row:hover {
+  background: #f8fafc;
+}
+
+.document-name {
+  font-weight: 900;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.document-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.pdf-dropzone {
+  border: 2px dashed #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+  padding: 22px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.pdf-dropzone:hover,
+.pdf-dropzone.is-dragging {
+  background: #eef4ff;
+  border-color: #2563eb;
+  box-shadow: var(--ring);
+}
+
+.pdf-dropzone-title {
+  font-weight: 900;
+  color: #0f172a;
+  margin-bottom: 4px;
+}

@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { circuitSupabase } from "../lib/circuitSupabase";
 
 type Compagnie =
   | "Autobus Breton"
@@ -12,6 +13,15 @@ type Organisation =
   | "Groupe Breton"
   | "Autre";
 
+type CircuitDocument = {
+  id: string;
+  nom: string;
+  storagePath: string;
+  publicUrl: string;
+  mimeType: string;
+  taille: number;
+};
+
 type CircuitScolaire = {
   id: string;
   circuit: string;
@@ -20,6 +30,7 @@ type CircuitScolaire = {
   telephone: string;
   localisation: string;
   compagnie: Compagnie;
+  documents: CircuitDocument[];
 };
 
 type ContactUrgence = {
@@ -47,6 +58,8 @@ type ColonneTriCircuit =
   | "localisation"
   | "compagnie";
 
+const BUCKET_DOCUMENTS = "circuits-scolaires-pdf";
+
 const circuitsDemo: CircuitScolaire[] = [
   {
     id: "1",
@@ -56,6 +69,7 @@ const circuitsDemo: CircuitScolaire[] = [
     telephone: "418-555-1234",
     localisation: "Saint-Georges",
     compagnie: "Autobus Breton",
+    documents: [],
   },
   {
     id: "2",
@@ -65,6 +79,7 @@ const circuitsDemo: CircuitScolaire[] = [
     telephone: "418-555-5678",
     localisation: "Beauceville",
     compagnie: "Autobus Breton",
+    documents: [],
   },
   {
     id: "3",
@@ -74,6 +89,7 @@ const circuitsDemo: CircuitScolaire[] = [
     telephone: "418-555-9876",
     localisation: "Saint-Joseph",
     compagnie: "Autobus Champagne",
+    documents: [],
   },
   {
     id: "4",
@@ -83,10 +99,19 @@ const circuitsDemo: CircuitScolaire[] = [
     telephone: "418-555-2222",
     localisation: "Saint-Georges",
     compagnie: "Transport Sécuritaire",
+    documents: [],
   },
 ];
 
-const contactsInitiaux: ContactUrgence[] = [];
+const circuitVide: Omit<CircuitScolaire, "id"> = {
+  circuit: "",
+  unite: "",
+  nomConducteur: "",
+  telephone: "",
+  localisation: "",
+  compagnie: "Autobus Breton",
+  documents: [],
+};
 
 const contactVide: Omit<ContactUrgence, "id"> = {
   organisation: "Groupe Breton",
@@ -103,6 +128,9 @@ const remplacantVide: Omit<ConducteurRemplacant, "id"> = {
   compagnie: "Autobus Breton",
 };
 
+const fichiersAcceptes =
+  "application/pdf,image/jpeg,image/png,image/webp,text/plain";
+
 function creerId() {
   return crypto.randomUUID?.() || String(Date.now());
 }
@@ -111,38 +139,117 @@ function telHref(phone: string) {
   return `tel:${phone.replace(/[^\d+]/g, "")}`;
 }
 
+function dossierCompagnie(compagnie: Compagnie) {
+  switch (compagnie) {
+    case "Autobus Breton":
+      return "breton";
+    case "Autobus Champagne":
+      return "champagne";
+    case "Transport Sécuritaire":
+      return "securitaire";
+  }
+}
+
+function nettoyerNomFichier(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function formatTaille(bytes: number) {
+  if (bytes < 1024) return `${bytes} o`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} Ko`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} Mo`;
+}
+
+function typeCourt(mime: string) {
+  if (mime.includes("pdf")) return "PDF";
+  if (mime.includes("image")) return "Image";
+  if (mime.includes("text")) return "Texte";
+  return "Fichier";
+}
+
 export default function CircuitsScolairesPage() {
-  const [circuits] = useState<CircuitScolaire[]>(circuitsDemo);
+  const inputFichierRef = useRef<HTMLInputElement | null>(null);
+
+  const [circuits, setCircuits] =
+    useState<CircuitScolaire[]>(circuitsDemo);
+
   const [contacts, setContacts] =
-    useState<ContactUrgence[]>(contactsInitiaux);
+    useState<ContactUrgence[]>([]);
+
   const [remplacants, setRemplacants] =
     useState<ConducteurRemplacant[]>([]);
 
   const [recherche, setRecherche] = useState("");
+
   const [compagnie, setCompagnie] =
     useState<Compagnie | "Toutes">("Toutes");
 
-  const [tri, setTri] = useState<ColonneTriCircuit>("circuit");
+  const [tri, setTri] =
+    useState<ColonneTriCircuit>("circuit");
+
   const [direction, setDirection] =
     useState<"asc" | "desc">("asc");
 
+  /*
+   * CIRCUIT
+   */
+
+  const [modalCircuitOuvert, setModalCircuitOuvert] =
+    useState(false);
+
+  const [circuitActifId, setCircuitActifId] =
+    useState<string | null>(null);
+
+  const [circuitForm, setCircuitForm] =
+    useState<Omit<CircuitScolaire, "id">>({
+      ...circuitVide,
+      documents: [],
+    });
+
+  const [dragActif, setDragActif] = useState(false);
+  const [operationEnCours, setOperationEnCours] =
+    useState(false);
+
+  /*
+   * CONTACT
+   */
+
   const [modalContactOuvert, setModalContactOuvert] =
     useState(false);
+
   const [contactActifId, setContactActifId] =
     useState<string | null>(null);
+
   const [contactForm, setContactForm] =
     useState<Omit<ContactUrgence, "id">>(contactVide);
 
+  /*
+   * REMPLAÇANT
+   */
+
   const [modalRemplacantOuvert, setModalRemplacantOuvert] =
     useState(false);
+
   const [remplacantActifId, setRemplacantActifId] =
     useState<string | null>(null);
+
   const [remplacantForm, setRemplacantForm] =
-    useState<Omit<ConducteurRemplacant, "id">>(remplacantVide);
+    useState<Omit<ConducteurRemplacant, "id">>(
+      remplacantVide
+    );
+
+  /*
+   * TRI
+   */
 
   function changerTri(colonne: ColonneTriCircuit) {
     if (tri === colonne) {
-      setDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      setDirection((prev) =>
+        prev === "asc" ? "desc" : "asc"
+      );
     } else {
       setTri(colonne);
       setDirection("asc");
@@ -159,7 +266,8 @@ export default function CircuitsScolairesPage() {
 
     const resultat = circuits.filter((item) => {
       const okCompagnie =
-        compagnie === "Toutes" || item.compagnie === compagnie;
+        compagnie === "Toutes" ||
+        item.compagnie === compagnie;
 
       const okRecherche =
         !q ||
@@ -177,12 +285,18 @@ export default function CircuitsScolairesPage() {
       const valeurA = a[tri].toLowerCase();
       const valeurB = b[tri].toLowerCase();
 
-      const comparaison = valeurA.localeCompare(valeurB, "fr", {
-        numeric: true,
-        sensitivity: "base",
-      });
+      const comparaison = valeurA.localeCompare(
+        valeurB,
+        "fr",
+        {
+          numeric: true,
+          sensitivity: "base",
+        }
+      );
 
-      return direction === "asc" ? comparaison : -comparaison;
+      return direction === "asc"
+        ? comparaison
+        : -comparaison;
     });
 
     return resultat;
@@ -196,13 +310,287 @@ export default function CircuitsScolairesPage() {
     );
   }, [remplacants, compagnie]);
 
+  /*
+   * CIRCUITS CRUD
+   */
+
+  function ouvrirAjoutCircuit() {
+    setCircuitActifId(null);
+
+    setCircuitForm({
+      ...circuitVide,
+      compagnie:
+        compagnie === "Toutes"
+          ? "Autobus Breton"
+          : compagnie,
+      documents: [],
+    });
+
+    setModalCircuitOuvert(true);
+  }
+
+  function ouvrirModificationCircuit(
+    circuit: CircuitScolaire
+  ) {
+    setCircuitActifId(circuit.id);
+
+    setCircuitForm({
+      circuit: circuit.circuit,
+      unite: circuit.unite,
+      nomConducteur: circuit.nomConducteur,
+      telephone: circuit.telephone,
+      localisation: circuit.localisation,
+      compagnie: circuit.compagnie,
+      documents: circuit.documents || [],
+    });
+
+    setModalCircuitOuvert(true);
+  }
+
+  function fermerModalCircuit() {
+    if (operationEnCours) return;
+
+    setModalCircuitOuvert(false);
+    setCircuitActifId(null);
+
+    setCircuitForm({
+      ...circuitVide,
+      documents: [],
+    });
+
+    setDragActif(false);
+  }
+
+  function enregistrerCircuit() {
+    const numero = circuitForm.circuit.trim();
+
+    if (!numero) {
+      alert("Le numéro de circuit est obligatoire.");
+      return;
+    }
+
+    const circuitSauvegarde: CircuitScolaire = {
+      id: circuitActifId || creerId(),
+      circuit: numero,
+      unite: circuitForm.unite.trim(),
+      nomConducteur:
+        circuitForm.nomConducteur.trim(),
+      telephone: circuitForm.telephone.trim(),
+      localisation:
+        circuitForm.localisation.trim(),
+      compagnie: circuitForm.compagnie,
+      documents: circuitForm.documents,
+    };
+
+    if (circuitActifId) {
+      setCircuits((prev) =>
+        prev.map((item) =>
+          item.id === circuitActifId
+            ? circuitSauvegarde
+            : item
+        )
+      );
+    } else {
+      setCircuits((prev) => [
+        ...prev,
+        circuitSauvegarde,
+      ]);
+    }
+
+    fermerModalCircuit();
+  }
+
+  async function supprimerCircuit() {
+    if (!circuitActifId) return;
+
+    const ok = confirm(
+      "Supprimer ce circuit et tous ses documents?"
+    );
+
+    if (!ok) return;
+
+    try {
+      setOperationEnCours(true);
+
+      const paths = circuitForm.documents.map(
+        (doc) => doc.storagePath
+      );
+
+      if (paths.length > 0) {
+        const { error } = await circuitSupabase.storage
+          .from(BUCKET_DOCUMENTS)
+          .remove(paths);
+
+        if (error) throw error;
+      }
+
+      setCircuits((prev) =>
+        prev.filter(
+          (item) => item.id !== circuitActifId
+        )
+      );
+
+      setModalCircuitOuvert(false);
+      setCircuitActifId(null);
+
+      setCircuitForm({
+        ...circuitVide,
+        documents: [],
+      });
+    } catch (error) {
+      console.error(error);
+      alert("Erreur pendant la suppression du circuit.");
+    } finally {
+      setOperationEnCours(false);
+    }
+  }
+
+  /*
+   * DOCUMENTS
+   */
+
+  async function ajouterDocuments(
+    files: FileList | File[]
+  ) {
+    const liste = Array.from(files);
+
+    if (liste.length === 0) return;
+
+    const numeroCircuit =
+      circuitForm.circuit.trim();
+
+    if (!numeroCircuit) {
+      alert(
+        "Inscris le numéro de circuit avant d’ajouter un fichier."
+      );
+      return;
+    }
+
+    try {
+      setOperationEnCours(true);
+
+      const nouveauxDocuments: CircuitDocument[] = [];
+
+      for (const file of liste) {
+        const dossier = dossierCompagnie(
+          circuitForm.compagnie
+        );
+
+        const nomNettoye = nettoyerNomFichier(
+          file.name
+        );
+
+        const storagePath =
+          `circuits-scolaires/${dossier}/` +
+          `${numeroCircuit}/` +
+          `${Date.now()}_${nomNettoye}`;
+
+        const { error } =
+          await circuitSupabase.storage
+            .from(BUCKET_DOCUMENTS)
+            .upload(storagePath, file, {
+              contentType:
+                file.type ||
+                "application/octet-stream",
+              upsert: false,
+            });
+
+        if (error) throw error;
+
+        const { data } =
+          circuitSupabase.storage
+            .from(BUCKET_DOCUMENTS)
+            .getPublicUrl(storagePath);
+
+        nouveauxDocuments.push({
+          id: creerId(),
+          nom: file.name,
+          storagePath,
+          publicUrl: data.publicUrl,
+          mimeType:
+            file.type ||
+            "application/octet-stream",
+          taille: file.size,
+        });
+      }
+
+      setCircuitForm((prev) => ({
+        ...prev,
+        documents: [
+          ...prev.documents,
+          ...nouveauxDocuments,
+        ],
+      }));
+    } catch (error) {
+      console.error(error);
+
+      alert(
+        "Erreur pendant l’envoi du fichier."
+      );
+    } finally {
+      setOperationEnCours(false);
+    }
+  }
+
+  async function supprimerDocument(
+    document: CircuitDocument
+  ) {
+    const ok = confirm(
+      `Supprimer "${document.nom}"?`
+    );
+
+    if (!ok) return;
+
+    try {
+      setOperationEnCours(true);
+
+      const { error } =
+        await circuitSupabase.storage
+          .from(BUCKET_DOCUMENTS)
+          .remove([document.storagePath]);
+
+      if (error) throw error;
+
+      setCircuitForm((prev) => ({
+        ...prev,
+        documents: prev.documents.filter(
+          (doc) => doc.id !== document.id
+        ),
+      }));
+    } catch (error) {
+      console.error(error);
+
+      alert(
+        "Erreur pendant la suppression du fichier."
+      );
+    } finally {
+      setOperationEnCours(false);
+    }
+  }
+
+  function ouvrirDocument(
+    document: CircuitDocument
+  ) {
+    window.open(
+      document.publicUrl,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  }
+
+  /*
+   * CONTACTS
+   */
+
   function ouvrirAjoutContact() {
     setContactActifId(null);
     setContactForm(contactVide);
     setModalContactOuvert(true);
   }
 
-  function ouvrirModificationContact(contact: ContactUrgence) {
+  function ouvrirModificationContact(
+    contact: ContactUrgence
+  ) {
     setContactActifId(contact.id);
 
     setContactForm({
@@ -227,30 +615,39 @@ export default function CircuitsScolairesPage() {
     const nom = contactForm.nom.trim();
 
     if (!nom) {
-      alert("Le nom du contact est obligatoire.");
+      alert(
+        "Le nom du contact est obligatoire."
+      );
       return;
     }
 
     const contactSauvegarde: ContactUrgence = {
       id: contactActifId || creerId(),
-      organisation: contactForm.organisation,
+      organisation:
+        contactForm.organisation,
       nom,
-      fonction: contactForm.fonction.trim(),
-      telephone: contactForm.telephone.trim(),
-      telephone2: contactForm.telephone2.trim(),
+      fonction:
+        contactForm.fonction.trim(),
+      telephone:
+        contactForm.telephone.trim(),
+      telephone2:
+        contactForm.telephone2.trim(),
       notes: contactForm.notes.trim(),
     };
 
     if (contactActifId) {
       setContacts((prev) =>
-        prev.map((contact) =>
-          contact.id === contactActifId
+        prev.map((item) =>
+          item.id === contactActifId
             ? contactSauvegarde
-            : contact
+            : item
         )
       );
     } else {
-      setContacts((prev) => [...prev, contactSauvegarde]);
+      setContacts((prev) => [
+        ...prev,
+        contactSauvegarde,
+      ]);
     }
 
     fermerModalContact();
@@ -259,23 +656,38 @@ export default function CircuitsScolairesPage() {
   function supprimerContact() {
     if (!contactActifId) return;
 
-    const ok = confirm("Supprimer ce contact d’urgence?");
-    if (!ok) return;
+    if (
+      !confirm(
+        "Supprimer ce contact d’urgence?"
+      )
+    ) {
+      return;
+    }
 
     setContacts((prev) =>
-      prev.filter((contact) => contact.id !== contactActifId)
+      prev.filter(
+        (item) => item.id !== contactActifId
+      )
     );
 
     fermerModalContact();
   }
 
+  /*
+   * REMPLAÇANTS
+   */
+
   function ouvrirAjoutRemplacant() {
     setRemplacantActifId(null);
+
     setRemplacantForm({
       ...remplacantVide,
       compagnie:
-        compagnie === "Toutes" ? "Autobus Breton" : compagnie,
+        compagnie === "Toutes"
+          ? "Autobus Breton"
+          : compagnie,
     });
+
     setModalRemplacantOuvert(true);
   }
 
@@ -303,29 +715,33 @@ export default function CircuitsScolairesPage() {
     const nom = remplacantForm.nom.trim();
 
     if (!nom) {
-      alert("Le nom du conducteur est obligatoire.");
+      alert(
+        "Le nom du conducteur est obligatoire."
+      );
       return;
     }
 
-    const remplacantSauvegarde: ConducteurRemplacant = {
+    const sauvegarde: ConducteurRemplacant = {
       id: remplacantActifId || creerId(),
       nom,
-      telephone: remplacantForm.telephone.trim(),
-      compagnie: remplacantForm.compagnie,
+      telephone:
+        remplacantForm.telephone.trim(),
+      compagnie:
+        remplacantForm.compagnie,
     };
 
     if (remplacantActifId) {
       setRemplacants((prev) =>
         prev.map((item) =>
           item.id === remplacantActifId
-            ? remplacantSauvegarde
+            ? sauvegarde
             : item
         )
       );
     } else {
       setRemplacants((prev) => [
         ...prev,
-        remplacantSauvegarde,
+        sauvegarde,
       ]);
     }
 
@@ -335,14 +751,19 @@ export default function CircuitsScolairesPage() {
   function supprimerRemplacant() {
     if (!remplacantActifId) return;
 
-    const ok = confirm(
-      "Supprimer ce conducteur remplaçant?"
-    );
-
-    if (!ok) return;
+    if (
+      !confirm(
+        "Supprimer ce conducteur remplaçant?"
+      )
+    ) {
+      return;
+    }
 
     setRemplacants((prev) =>
-      prev.filter((item) => item.id !== remplacantActifId)
+      prev.filter(
+        (item) =>
+          item.id !== remplacantActifId
+      )
     );
 
     fermerModalRemplacant();
@@ -353,41 +774,58 @@ export default function CircuitsScolairesPage() {
       <div className="page-header">
         <div>
           <h1>Circuits scolaire</h1>
+
           <div className="muted">
-            Répertoire des circuits scolaires, contacts d’urgence
-            et conducteurs remplaçants.
+            Répertoire des circuits scolaires,
+            contacts d’urgence et conducteurs
+            remplaçants.
           </div>
         </div>
 
         <div className="page-actions">
-          <button className="btn-primary" type="button">
+          <button
+            className="btn-primary"
+            type="button"
+            onClick={ouvrirAjoutCircuit}
+          >
             + Ajouter un circuit
           </button>
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom: 14 }}>
+      <div
+        className="card"
+        style={{ marginBottom: 14 }}
+      >
         <div className="form-grid">
           <div className="field">
-            <div className="label">Recherche</div>
+            <div className="label">
+              Recherche
+            </div>
 
             <input
               className="input"
               value={recherche}
-              onChange={(e) => setRecherche(e.target.value)}
+              onChange={(e) =>
+                setRecherche(e.target.value)
+              }
               placeholder="Circuit, unité, conducteur, téléphone ou localisation..."
             />
           </div>
 
           <div className="field">
-            <div className="label">Compagnie</div>
+            <div className="label">
+              Compagnie
+            </div>
 
             <select
               className="input"
               value={compagnie}
               onChange={(e) =>
                 setCompagnie(
-                  e.target.value as Compagnie | "Toutes"
+                  e.target.value as
+                    | Compagnie
+                    | "Toutes"
                 )
               }
             >
@@ -411,7 +849,12 @@ export default function CircuitsScolairesPage() {
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom: 14 }}>
+      {/* CONTACTS URGENCE */}
+
+      <div
+        className="card"
+        style={{ marginBottom: 14 }}
+      >
         <div className="card-head">
           <div>
             <div className="card-title">
@@ -450,39 +893,57 @@ export default function CircuitsScolairesPage() {
                   className="row"
                   key={contact.id}
                   onDoubleClick={() =>
-                    ouvrirModificationContact(contact)
+                    ouvrirModificationContact(
+                      contact
+                    )
                   }
                   title="Double-clic pour modifier"
                 >
-                  <td>{contact.organisation}</td>
-
                   <td>
-                    <strong>{contact.nom}</strong>
+                    {contact.organisation}
                   </td>
 
                   <td>
-                    {contact.fonction || (
-                      <span className="muted">—</span>
-                    )}
+                    <strong>
+                      {contact.nom}
+                    </strong>
+                  </td>
+
+                  <td>
+                    {contact.fonction || "—"}
                   </td>
 
                   <td>
                     {contact.telephone ? (
-                      <a href={telHref(contact.telephone)}>
+                      <a
+                        href={telHref(
+                          contact.telephone
+                        )}
+                        onDoubleClick={(e) =>
+                          e.stopPropagation()
+                        }
+                      >
                         {contact.telephone}
                       </a>
                     ) : (
-                      <span className="muted">—</span>
+                      "—"
                     )}
                   </td>
 
                   <td>
                     {contact.telephone2 ? (
-                      <a href={telHref(contact.telephone2)}>
+                      <a
+                        href={telHref(
+                          contact.telephone2
+                        )}
+                        onDoubleClick={(e) =>
+                          e.stopPropagation()
+                        }
+                      >
                         {contact.telephone2}
                       </a>
                     ) : (
-                      <span className="muted">—</span>
+                      "—"
                     )}
                   </td>
                 </tr>
@@ -490,7 +951,10 @@ export default function CircuitsScolairesPage() {
 
               {contacts.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="muted">
+                  <td
+                    colSpan={5}
+                    className="muted"
+                  >
                     Aucun contact d’urgence.
                   </td>
                 </tr>
@@ -498,19 +962,20 @@ export default function CircuitsScolairesPage() {
             </tbody>
           </table>
         </div>
-
-        <div className="hint">
-          Double-clic sur un contact pour le modifier.
-        </div>
       </div>
+
+      {/* CIRCUITS */}
 
       <div className="card">
         <div className="card-head">
           <div>
-            <div className="card-title">Circuits</div>
+            <div className="card-title">
+              Circuits
+            </div>
 
             <div className="card-subtitle">
-              Clique sur un titre de colonne pour trier le tableau.
+              Double-clic sur un circuit pour
+              ouvrir sa fiche.
             </div>
           </div>
         </div>
@@ -521,31 +986,43 @@ export default function CircuitsScolairesPage() {
               <tr>
                 <th
                   className="sortable-head"
-                  onClick={() => changerTri("circuit")}
+                  onClick={() =>
+                    changerTri("circuit")
+                  }
                 >
-                  Circuit{indicateurTri("circuit")}
-                </th>
-
-                <th
-                  className="sortable-head"
-                  onClick={() => changerTri("unite")}
-                >
-                  Unité{indicateurTri("unite")}
+                  Circuit
+                  {indicateurTri("circuit")}
                 </th>
 
                 <th
                   className="sortable-head"
                   onClick={() =>
-                    changerTri("nomConducteur")
+                    changerTri("unite")
                   }
                 >
-                  Nom conducteur
-                  {indicateurTri("nomConducteur")}
+                  Unité
+                  {indicateurTri("unite")}
                 </th>
 
                 <th
                   className="sortable-head"
-                  onClick={() => changerTri("telephone")}
+                  onClick={() =>
+                    changerTri(
+                      "nomConducteur"
+                    )
+                  }
+                >
+                  Nom conducteur
+                  {indicateurTri(
+                    "nomConducteur"
+                  )}
+                </th>
+
+                <th
+                  className="sortable-head"
+                  onClick={() =>
+                    changerTri("telephone")
+                  }
                 >
                   Téléphone
                   {indicateurTri("telephone")}
@@ -553,56 +1030,92 @@ export default function CircuitsScolairesPage() {
 
                 <th
                   className="sortable-head"
-                  onClick={() => changerTri("localisation")}
+                  onClick={() =>
+                    changerTri(
+                      "localisation"
+                    )
+                  }
                 >
                   Localisation
-                  {indicateurTri("localisation")}
+                  {indicateurTri(
+                    "localisation"
+                  )}
                 </th>
 
                 <th
                   className="sortable-head"
-                  onClick={() => changerTri("compagnie")}
+                  onClick={() =>
+                    changerTri("compagnie")
+                  }
                 >
                   Compagnie
                   {indicateurTri("compagnie")}
                 </th>
+
+                <th>Documents</th>
               </tr>
             </thead>
 
             <tbody>
               {circuitsFiltres.map((item) => (
-                <tr className="row" key={item.id}>
+                <tr
+                  className="row"
+                  key={item.id}
+                  onDoubleClick={() =>
+                    ouvrirModificationCircuit(
+                      item
+                    )
+                  }
+                  title="Double-clic pour modifier"
+                >
                   <td>
-                    <strong>{item.circuit}</strong>
+                    <strong>
+                      {item.circuit}
+                    </strong>
                   </td>
 
                   <td>{item.unite}</td>
 
-                  <td>{item.nomConducteur}</td>
+                  <td>
+                    {item.nomConducteur}
+                  </td>
 
                   <td>
-                    <a href={telHref(item.telephone)}>
-                      {item.telephone}
-                    </a>
+                    {item.telephone ? (
+                      <a
+                        href={telHref(
+                          item.telephone
+                        )}
+                        onDoubleClick={(e) =>
+                          e.stopPropagation()
+                        }
+                      >
+                        {item.telephone}
+                      </a>
+                    ) : (
+                      "—"
+                    )}
                   </td>
 
-                  <td>{item.localisation}</td>
+                  <td>
+                    {item.localisation}
+                  </td>
 
                   <td>{item.compagnie}</td>
-                </tr>
-              ))}
 
-              {circuitsFiltres.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="muted">
-                    Aucun circuit trouvé.
+                  <td>
+                    {item.documents.length > 0
+                      ? `${item.documents.length} document(s)`
+                      : "—"}
                   </td>
                 </tr>
-              )}
+              ))}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* REMPLAÇANTS */}
 
       <div
         className="card"
@@ -615,8 +1128,8 @@ export default function CircuitsScolairesPage() {
             </div>
 
             <div className="card-subtitle">
-              Liste des conducteurs disponibles pour effectuer
-              des remplacements.
+              Conducteurs disponibles pour les
+              remplacements.
             </div>
           </div>
 
@@ -640,36 +1153,55 @@ export default function CircuitsScolairesPage() {
             </thead>
 
             <tbody>
-              {remplacantsFiltres.map((item) => (
-                <tr
-                  className="row"
-                  key={item.id}
-                  onDoubleClick={() =>
-                    ouvrirModificationRemplacant(item)
-                  }
-                  title="Double-clic pour modifier"
-                >
-                  <td>
-                    <strong>{item.nom}</strong>
-                  </td>
+              {remplacantsFiltres.map(
+                (item) => (
+                  <tr
+                    className="row"
+                    key={item.id}
+                    onDoubleClick={() =>
+                      ouvrirModificationRemplacant(
+                        item
+                      )
+                    }
+                    title="Double-clic pour modifier"
+                  >
+                    <td>
+                      <strong>
+                        {item.nom}
+                      </strong>
+                    </td>
 
-                  <td>
-                    {item.telephone ? (
-                      <a href={telHref(item.telephone)}>
-                        {item.telephone}
-                      </a>
-                    ) : (
-                      <span className="muted">—</span>
-                    )}
-                  </td>
+                    <td>
+                      {item.telephone ? (
+                        <a
+                          href={telHref(
+                            item.telephone
+                          )}
+                          onDoubleClick={(e) =>
+                            e.stopPropagation()
+                          }
+                        >
+                          {item.telephone}
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
 
-                  <td>{item.compagnie}</td>
-                </tr>
-              ))}
+                    <td>
+                      {item.compagnie}
+                    </td>
+                  </tr>
+                )
+              )}
 
-              {remplacantsFiltres.length === 0 && (
+              {remplacantsFiltres.length ===
+                0 && (
                 <tr>
-                  <td colSpan={3} className="muted">
+                  <td
+                    colSpan={3}
+                    className="muted"
+                  >
                     Aucun conducteur remplaçant.
                   </td>
                 </tr>
@@ -677,11 +1209,364 @@ export default function CircuitsScolairesPage() {
             </tbody>
           </table>
         </div>
-
-        <div className="hint">
-          Double-clic sur un conducteur pour le modifier.
-        </div>
       </div>
+
+      {/* MODAL CIRCUIT */}
+
+      {modalCircuitOuvert && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={fermerModalCircuit}
+        >
+          <div
+            className="modal-card"
+            onMouseDown={(e) =>
+              e.stopPropagation()
+            }
+          >
+            <div className="modal-head">
+              <div>
+                <div className="modal-title">
+                  {circuitActifId
+                    ? `Circuit ${circuitForm.circuit}`
+                    : "Ajouter un circuit"}
+                </div>
+
+                <div className="muted">
+                  Informations et documents du
+                  circuit scolaire.
+                </div>
+              </div>
+
+              <button
+                className="ghost"
+                type="button"
+                onClick={fermerModalCircuit}
+                disabled={operationEnCours}
+              >
+                Fermer
+              </button>
+            </div>
+
+            <div className="form-grid">
+              <div className="field">
+                <div className="label">
+                  Circuit
+                </div>
+
+                <input
+                  className="input"
+                  value={
+                    circuitForm.circuit
+                  }
+                  onChange={(e) =>
+                    setCircuitForm(
+                      (prev) => ({
+                        ...prev,
+                        circuit:
+                          e.target.value,
+                      })
+                    )
+                  }
+                />
+              </div>
+
+              <div className="field">
+                <div className="label">
+                  Unité
+                </div>
+
+                <input
+                  className="input"
+                  value={circuitForm.unite}
+                  onChange={(e) =>
+                    setCircuitForm(
+                      (prev) => ({
+                        ...prev,
+                        unite:
+                          e.target.value,
+                      })
+                    )
+                  }
+                />
+              </div>
+
+              <div className="field">
+                <div className="label">
+                  Compagnie
+                </div>
+
+                <select
+                  className="input"
+                  value={
+                    circuitForm.compagnie
+                  }
+                  onChange={(e) =>
+                    setCircuitForm(
+                      (prev) => ({
+                        ...prev,
+                        compagnie:
+                          e.target
+                            .value as Compagnie,
+                      })
+                    )
+                  }
+                >
+                  <option value="Autobus Breton">
+                    Autobus Breton
+                  </option>
+
+                  <option value="Autobus Champagne">
+                    Autobus Champagne
+                  </option>
+
+                  <option value="Transport Sécuritaire">
+                    Transport Sécuritaire
+                  </option>
+                </select>
+              </div>
+
+              <div className="field">
+                <div className="label">
+                  Nom conducteur
+                </div>
+
+                <input
+                  className="input"
+                  value={
+                    circuitForm.nomConducteur
+                  }
+                  onChange={(e) =>
+                    setCircuitForm(
+                      (prev) => ({
+                        ...prev,
+                        nomConducteur:
+                          e.target.value,
+                      })
+                    )
+                  }
+                />
+              </div>
+
+              <div className="field">
+                <div className="label">
+                  Téléphone
+                </div>
+
+                <input
+                  className="input"
+                  value={
+                    circuitForm.telephone
+                  }
+                  onChange={(e) =>
+                    setCircuitForm(
+                      (prev) => ({
+                        ...prev,
+                        telephone:
+                          e.target.value,
+                      })
+                    )
+                  }
+                />
+              </div>
+
+              <div className="field">
+                <div className="label">
+                  Localisation
+                </div>
+
+                <input
+                  className="input"
+                  value={
+                    circuitForm.localisation
+                  }
+                  onChange={(e) =>
+                    setCircuitForm(
+                      (prev) => ({
+                        ...prev,
+                        localisation:
+                          e.target.value,
+                      })
+                    )
+                  }
+                />
+              </div>
+            </div>
+
+            <div
+              className="field"
+              style={{ marginTop: 16 }}
+            >
+              <div className="label">
+                Documents du circuit
+              </div>
+
+              <input
+                ref={inputFichierRef}
+                type="file"
+                multiple
+                accept={fichiersAcceptes}
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  if (e.target.files) {
+                    void ajouterDocuments(
+                      e.target.files
+                    );
+                  }
+
+                  e.currentTarget.value =
+                    "";
+                }}
+              />
+
+              <div
+                className={
+                  "pdf-dropzone" +
+                  (dragActif
+                    ? " is-dragging"
+                    : "")
+                }
+                onClick={() =>
+                  inputFichierRef.current?.click()
+                }
+                onDoubleClick={() =>
+                  inputFichierRef.current?.click()
+                }
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragActif(true);
+                }}
+                onDragLeave={() =>
+                  setDragActif(false)
+                }
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragActif(false);
+
+                  void ajouterDocuments(
+                    e.dataTransfer.files
+                  );
+                }}
+              >
+                <div className="pdf-dropzone-title">
+                  Glisser les fichiers ici
+                </div>
+
+                <div className="muted">
+                  PDF, images ou fichiers texte.
+                  Clic ou double-clic pour
+                  sélectionner.
+                </div>
+              </div>
+
+              {circuitForm.documents.length >
+                0 && (
+                <div className="documents-list">
+                  {circuitForm.documents.map(
+                    (doc) => (
+                      <div
+                        className="document-row"
+                        key={doc.id}
+                        onDoubleClick={() =>
+                          ouvrirDocument(doc)
+                        }
+                        title="Double-clic pour ouvrir"
+                      >
+                        <div>
+                          <div className="document-name">
+                            {doc.nom}
+                          </div>
+
+                          <div className="muted">
+                            {typeCourt(
+                              doc.mimeType
+                            )}{" "}
+                            ·{" "}
+                            {formatTaille(
+                              doc.taille
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="document-actions">
+                          <button
+                            className="btn"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              ouvrirDocument(
+                                doc
+                              );
+                            }}
+                          >
+                            Ouvrir
+                          </button>
+
+                          <button
+                            className="btn-danger"
+                            type="button"
+                            disabled={
+                              operationEnCours
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+
+                              void supprimerDocument(
+                                doc
+                              );
+                            }}
+                          >
+                            Supprimer
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-actions">
+              {circuitActifId && (
+                <button
+                  className="btn-danger"
+                  type="button"
+                  onClick={() =>
+                    void supprimerCircuit()
+                  }
+                  disabled={operationEnCours}
+                >
+                  Supprimer le circuit
+                </button>
+              )}
+
+              <div className="modal-actions-right">
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={fermerModalCircuit}
+                  disabled={operationEnCours}
+                >
+                  Annuler
+                </button>
+
+                <button
+                  className="btn-primary"
+                  type="button"
+                  onClick={enregistrerCircuit}
+                  disabled={operationEnCours}
+                >
+                  {operationEnCours
+                    ? "Traitement..."
+                    : "Enregistrer"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONTACT */}
 
       {modalContactOuvert && (
         <div
@@ -690,7 +1575,9 @@ export default function CircuitsScolairesPage() {
         >
           <div
             className="modal-card"
-            onMouseDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) =>
+              e.stopPropagation()
+            }
           >
             <div className="modal-head">
               <div>
@@ -698,10 +1585,6 @@ export default function CircuitsScolairesPage() {
                   {contactActifId
                     ? "Modifier le contact d’urgence"
                     : "Ajouter un contact d’urgence"}
-                </div>
-
-                <div className="muted">
-                  Coordonnées du contact.
                 </div>
               </div>
 
@@ -722,31 +1605,32 @@ export default function CircuitsScolairesPage() {
 
                 <select
                   className="input"
-                  value={contactForm.organisation}
+                  value={
+                    contactForm.organisation
+                  }
                   onChange={(e) =>
-                    setContactForm((prev) => ({
-                      ...prev,
-                      organisation:
-                        e.target.value as Organisation,
-                    }))
+                    setContactForm(
+                      (prev) => ({
+                        ...prev,
+                        organisation:
+                          e.target
+                            .value as Organisation,
+                      })
+                    )
                   }
                 >
                   <option value="Groupe Breton">
                     Groupe Breton
                   </option>
-
                   <option value="Autobus Breton">
                     Autobus Breton
                   </option>
-
                   <option value="Autobus Champagne">
                     Autobus Champagne
                   </option>
-
                   <option value="Transport Sécuritaire">
                     Transport Sécuritaire
                   </option>
-
                   <option value="Autre">
                     Autre
                   </option>
@@ -754,64 +1638,87 @@ export default function CircuitsScolairesPage() {
               </div>
 
               <div className="field">
-                <div className="label">Nom</div>
+                <div className="label">
+                  Nom
+                </div>
 
                 <input
                   className="input"
                   value={contactForm.nom}
                   onChange={(e) =>
-                    setContactForm((prev) => ({
-                      ...prev,
-                      nom: e.target.value,
-                    }))
+                    setContactForm(
+                      (prev) => ({
+                        ...prev,
+                        nom: e.target.value,
+                      })
+                    )
                   }
                 />
               </div>
 
               <div className="field">
-                <div className="label">Fonction</div>
+                <div className="label">
+                  Fonction
+                </div>
 
                 <input
                   className="input"
-                  value={contactForm.fonction}
+                  value={
+                    contactForm.fonction
+                  }
                   onChange={(e) =>
-                    setContactForm((prev) => ({
-                      ...prev,
-                      fonction: e.target.value,
-                    }))
+                    setContactForm(
+                      (prev) => ({
+                        ...prev,
+                        fonction:
+                          e.target.value,
+                      })
+                    )
                   }
                 />
               </div>
 
               <div className="field">
-                <div className="label">Téléphone</div>
+                <div className="label">
+                  Téléphone
+                </div>
 
                 <input
                   className="input"
-                  value={contactForm.telephone}
-                  onChange={(e) =>
-                    setContactForm((prev) => ({
-                      ...prev,
-                      telephone: e.target.value,
-                    }))
+                  value={
+                    contactForm.telephone
                   }
-                  placeholder="418-555-1234"
+                  onChange={(e) =>
+                    setContactForm(
+                      (prev) => ({
+                        ...prev,
+                        telephone:
+                          e.target.value,
+                      })
+                    )
+                  }
                 />
               </div>
 
               <div className="field">
-                <div className="label">Téléphone 2</div>
+                <div className="label">
+                  Téléphone 2
+                </div>
 
                 <input
                   className="input"
-                  value={contactForm.telephone2}
-                  onChange={(e) =>
-                    setContactForm((prev) => ({
-                      ...prev,
-                      telephone2: e.target.value,
-                    }))
+                  value={
+                    contactForm.telephone2
                   }
-                  placeholder="418-555-5678"
+                  onChange={(e) =>
+                    setContactForm(
+                      (prev) => ({
+                        ...prev,
+                        telephone2:
+                          e.target.value,
+                      })
+                    )
+                  }
                 />
               </div>
             </div>
@@ -820,16 +1727,21 @@ export default function CircuitsScolairesPage() {
               className="field"
               style={{ marginTop: 12 }}
             >
-              <div className="label">Notes</div>
+              <div className="label">
+                Notes
+              </div>
 
               <textarea
                 className="input"
                 value={contactForm.notes}
                 onChange={(e) =>
-                  setContactForm((prev) => ({
-                    ...prev,
-                    notes: e.target.value,
-                  }))
+                  setContactForm(
+                    (prev) => ({
+                      ...prev,
+                      notes:
+                        e.target.value,
+                    })
+                  )
                 }
               />
             </div>
@@ -867,14 +1779,20 @@ export default function CircuitsScolairesPage() {
         </div>
       )}
 
+      {/* MODAL REMPLAÇANT */}
+
       {modalRemplacantOuvert && (
         <div
           className="modal-backdrop"
-          onMouseDown={fermerModalRemplacant}
+          onMouseDown={
+            fermerModalRemplacant
+          }
         >
           <div
             className="modal-card"
-            onMouseDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) =>
+              e.stopPropagation()
+            }
           >
             <div className="modal-head">
               <div>
@@ -883,16 +1801,14 @@ export default function CircuitsScolairesPage() {
                     ? "Modifier le conducteur remplaçant"
                     : "Ajouter un conducteur remplaçant"}
                 </div>
-
-                <div className="muted">
-                  Coordonnées du conducteur remplaçant.
-                </div>
               </div>
 
               <button
                 className="ghost"
                 type="button"
-                onClick={fermerModalRemplacant}
+                onClick={
+                  fermerModalRemplacant
+                }
               >
                 Fermer
               </button>
@@ -900,49 +1816,67 @@ export default function CircuitsScolairesPage() {
 
             <div className="form-grid">
               <div className="field">
-                <div className="label">Nom</div>
+                <div className="label">
+                  Nom
+                </div>
 
                 <input
                   className="input"
-                  value={remplacantForm.nom}
-                  onChange={(e) =>
-                    setRemplacantForm((prev) => ({
-                      ...prev,
-                      nom: e.target.value,
-                    }))
+                  value={
+                    remplacantForm.nom
                   }
-                  placeholder="Nom du conducteur"
+                  onChange={(e) =>
+                    setRemplacantForm(
+                      (prev) => ({
+                        ...prev,
+                        nom: e.target.value,
+                      })
+                    )
+                  }
                 />
               </div>
 
               <div className="field">
-                <div className="label">Téléphone</div>
+                <div className="label">
+                  Téléphone
+                </div>
 
                 <input
                   className="input"
-                  value={remplacantForm.telephone}
-                  onChange={(e) =>
-                    setRemplacantForm((prev) => ({
-                      ...prev,
-                      telephone: e.target.value,
-                    }))
+                  value={
+                    remplacantForm.telephone
                   }
-                  placeholder="418-555-1234"
+                  onChange={(e) =>
+                    setRemplacantForm(
+                      (prev) => ({
+                        ...prev,
+                        telephone:
+                          e.target.value,
+                      })
+                    )
+                  }
                 />
               </div>
 
               <div className="field">
-                <div className="label">Compagnie</div>
+                <div className="label">
+                  Compagnie
+                </div>
 
                 <select
                   className="input"
-                  value={remplacantForm.compagnie}
+                  value={
+                    remplacantForm.compagnie
+                  }
                   onChange={(e) =>
-                    setRemplacantForm((prev) => ({
-                      ...prev,
-                      compagnie:
-                        e.target.value as Compagnie,
-                    }))
+                    setRemplacantForm(
+                      (prev) => ({
+                        ...prev,
+                        compagnie:
+                          e.target
+                            .value as Compagnie,
+                      })
+                    )
                   }
                 >
                   <option value="Autobus Breton">
@@ -965,7 +1899,9 @@ export default function CircuitsScolairesPage() {
                 <button
                   className="btn-danger"
                   type="button"
-                  onClick={supprimerRemplacant}
+                  onClick={
+                    supprimerRemplacant
+                  }
                 >
                   Supprimer
                 </button>
@@ -975,7 +1911,9 @@ export default function CircuitsScolairesPage() {
                 <button
                   className="ghost"
                   type="button"
-                  onClick={fermerModalRemplacant}
+                  onClick={
+                    fermerModalRemplacant
+                  }
                 >
                   Annuler
                 </button>
@@ -983,7 +1921,9 @@ export default function CircuitsScolairesPage() {
                 <button
                   className="btn-primary"
                   type="button"
-                  onClick={enregistrerRemplacant}
+                  onClick={
+                    enregistrerRemplacant
+                  }
                 >
                   Enregistrer
                 </button>
