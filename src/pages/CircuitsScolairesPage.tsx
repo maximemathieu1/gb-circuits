@@ -6,6 +6,8 @@ import {
 } from "react";
 
 import { circuitSupabase } from "../lib/circuitSupabase";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 type Compagnie =
   | "Autobus Breton"
@@ -1382,6 +1384,117 @@ export default function CircuitsScolairesPage() {
   }
 
   /*
+   * EXPORT PDF
+   */
+
+  function exporterCircuitsPdf() {
+    if (circuitsFiltres.length === 0) {
+      alert("Aucun circuit à exporter.");
+      return;
+    }
+
+    const doc = new jsPDF({
+      orientation: "landscape",
+      unit: "mm",
+      format: "letter",
+    });
+
+    const titre =
+      compagnie === "Toutes"
+        ? "Circuits scolaire - Toutes les compagnies"
+        : `Circuits scolaire - ${compagnie}`;
+
+    const dateExport = new Date().toLocaleDateString("fr-CA");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text(titre, 12, 14);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(`Exporté le ${dateExport}`, 12, 20);
+
+    let startY = 25;
+
+    if (recherche.trim()) {
+      doc.text(`Recherche : ${recherche.trim()}`, 12, 25);
+      startY = 30;
+    }
+
+    const lignes = circuitsFiltres.map((item) => [
+      item.circuit,
+      item.unite || "",
+      item.nomConducteur || "",
+      item.telephone || "",
+      item.localisation || "",
+      item.compagnie,
+    ]);
+
+    autoTable(doc, {
+      startY,
+      head: [
+        [
+          "Circuit",
+          "Unité",
+          "Nom conducteur",
+          "Téléphone",
+          "Localisation",
+          "Compagnie",
+        ],
+      ],
+      body: lignes,
+      theme: "grid",
+      margin: {
+        top: 15,
+        right: 10,
+        bottom: 15,
+        left: 10,
+      },
+      styles: {
+        font: "helvetica",
+        fontSize: 9,
+        cellPadding: 2.5,
+        overflow: "linebreak",
+        valign: "middle",
+      },
+      headStyles: {
+        fontStyle: "bold",
+        halign: "left",
+      },
+      columnStyles: {
+        0: { cellWidth: 24 },
+        1: { cellWidth: 20 },
+        2: { cellWidth: 52 },
+        3: { cellWidth: 37 },
+        4: { cellWidth: 52 },
+        5: { cellWidth: 55 },
+      },
+      didDrawPage: () => {
+        const largeur = doc.internal.pageSize.getWidth();
+        const hauteur = doc.internal.pageSize.getHeight();
+        const page = doc.getNumberOfPages();
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.text(`Page ${page}`, largeur - 12, hauteur - 7, {
+          align: "right",
+        });
+      },
+    });
+
+    const nomFichier =
+      compagnie === "Toutes"
+        ? "circuits-scolaires"
+        : `circuits-${compagnie
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-z0-9]+/g, "-")}`;
+
+    doc.save(`${nomFichier}.pdf`);
+  }
+
+  /*
    * AFFICHAGE
    */
 
@@ -1622,13 +1735,24 @@ export default function CircuitsScolairesPage() {
             </div>
           </div>
 
-          <button
-            className="btn-primary"
-            type="button"
-            onClick={ouvrirAjoutCircuit}
-          >
-            + Ajouter un circuit
-          </button>
+          <div className="page-actions">
+            <button
+              className="btn"
+              type="button"
+              onClick={exporterCircuitsPdf}
+              disabled={circuitsFiltres.length === 0}
+            >
+              Exporter PDF
+            </button>
+
+            <button
+              className="btn-primary"
+              type="button"
+              onClick={ouvrirAjoutCircuit}
+            >
+              + Ajouter un circuit
+            </button>
+          </div>
         </div>
 
         <div className="table-wrap">
