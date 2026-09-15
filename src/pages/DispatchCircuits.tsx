@@ -9,12 +9,9 @@ function isDesktop() {
 
 /* ========= Transporteur filter (checkbox + mémoire) ========= */
 type Carrier = "B" | "C" | "S";
-type Period = "AM" | "PM" | "AUTRE";
-
 const CARRIER_LABEL: Record<Carrier, string> = { B: "B", C: "C", S: "S" };
 const LS_CARRIERS_KEY = "dispatchCircuits.transporteurs";
 const LS_EXPANDED_CIRCUITS_KEY = "dispatchCircuits.expandedCircuits";
-const LS_EXPANDED_PERIODS_KEY = "dispatchCircuits.expandedPeriods";
 
 function loadCarrierSet(): Set<Carrier> {
   try {
@@ -121,22 +118,16 @@ function normalizeName(value?: string | null) {
   return String(value ?? "").trim().replace(/\s+/g, " ");
 }
 
-function detectPeriod(value?: string | null): Period {
-  const normalized = normalizeName(value).toUpperCase();
-
-  if (/\bAM\b/.test(normalized) || normalized.endsWith("AM")) return "AM";
-  if (/\bPM\b/.test(normalized) || normalized.endsWith("PM")) return "PM";
-
-  return "AUTRE";
-}
-
 /**
- * 00601 AM -> 006
- * 00602 AM -> 006
- * 00603 PM -> 006
- * 21201 AM -> 212
- * 012AM    -> 012
- * 107 PM   -> 107
+ * Le nom du parcours est défini manuellement.
+ * Exemples attendus :
+ * 006 AM -> Circuit 006
+ * 006 PM -> Circuit 006
+ * 106 AM -> Circuit 106
+ * 106 PM -> Circuit 106
+ *
+ * Le repli sur 5 chiffres conserve la compatibilité avec les anciens noms
+ * (ex. 00601 AM -> Circuit 006), mais l'affichage ne crée plus de groupe AM/PM.
  */
 function detectParentCircuit(value?: string | null) {
   const normalized = normalizeName(value).toUpperCase();
@@ -155,73 +146,17 @@ function detectParentCircuit(value?: string | null) {
   return digits;
 }
 
-function firstValidTime(
-  rows: DispatchCircuitRow[],
-  field: "heure_depart" | "heure_retour",
-  mode: "min" | "max"
-) {
-  const values = rows
-    .map((row) => ({
-      raw: row[field] ?? null,
-      minutes: parseTimeToMinutes(row[field] ?? null),
-    }))
-    .filter((item) => item.minutes != null)
-    .sort((a, b) => Number(a.minutes) - Number(b.minutes));
-
-  if (!values.length) return null;
-  return mode === "min" ? values[0].raw : values[values.length - 1].raw;
-}
-
-type PeriodGroup = {
-  period: Period;
-  rows: DispatchCircuitRow[];
-  totalStops: number;
-  totalTransfers: number;
-  totalKm: number;
-  firstDeparture: string | null;
-  lastReturn: string | null;
-};
-
 type CircuitGroup = {
   key: string;
   circuitNo: string;
   carrierCode: string;
   rows: DispatchCircuitRow[];
-  periods: PeriodGroup[];
   totalStops: number;
   totalTransfers: number;
   totalKm: number;
   units: string[];
   drivers: string[];
 };
-
-function makePeriodGroup(
-  period: Period,
-  rows: DispatchCircuitRow[]
-): PeriodGroup {
-  const sortedRows = [...rows].sort((a, b) =>
-    naturalCompare(String(a.nom ?? ""), String(b.nom ?? ""))
-  );
-
-  return {
-    period,
-    rows: sortedRows,
-    totalStops: sortedRows.reduce(
-      (sum, row) => sum + Number(row.nb_arrets ?? 0),
-      0
-    ),
-    totalTransfers: sortedRows.reduce(
-      (sum, row) => sum + Number(row.nb_transferts ?? 0),
-      0
-    ),
-    totalKm: sortedRows.reduce(
-      (sum, row) => sum + Number(row.km_total ?? 0),
-      0
-    ),
-    firstDeparture: firstValidTime(sortedRows, "heure_depart", "min"),
-    lastReturn: firstValidTime(sortedRows, "heure_retour", "max"),
-  };
-}
 
 function buildGroups(rows: DispatchCircuitRow[]): CircuitGroup[] {
   const map = new Map<string, DispatchCircuitRow[]>();
@@ -239,18 +174,9 @@ function buildGroups(rows: DispatchCircuitRow[]): CircuitGroup[] {
   return Array.from(map.entries())
     .map(([key, groupRows]) => {
       const [carrierCode, circuitNo] = key.split("|");
-
-      const amRows = groupRows.filter((row) => detectPeriod(row.nom) === "AM");
-      const pmRows = groupRows.filter((row) => detectPeriod(row.nom) === "PM");
-      const otherRows = groupRows.filter(
-        (row) => detectPeriod(row.nom) === "AUTRE"
+      const sortedRows = [...groupRows].sort((a, b) =>
+        naturalCompare(String(a.nom ?? ""), String(b.nom ?? ""))
       );
-
-      const periods = [
-        makePeriodGroup("AM", amRows),
-        makePeriodGroup("PM", pmRows),
-        makePeriodGroup("AUTRE", otherRows),
-      ].filter((period) => period.rows.length > 0);
 
       const units = Array.from(
         new Set(
@@ -272,8 +198,7 @@ function buildGroups(rows: DispatchCircuitRow[]): CircuitGroup[] {
         key,
         circuitNo,
         carrierCode,
-        rows: groupRows,
-        periods,
+        rows: sortedRows,
         totalStops: groupRows.reduce(
           (sum, row) => sum + Number(row.nb_arrets ?? 0),
           0
@@ -293,11 +218,6 @@ function buildGroups(rows: DispatchCircuitRow[]): CircuitGroup[] {
     .sort((a, b) => naturalCompare(a.circuitNo, b.circuitNo));
 }
 
-function periodLabel(period: Period) {
-  if (period === "AUTRE") return "Autres";
-  return period;
-}
-
 export default function DispatchCircuits() {
   const nav = useNavigate();
 
@@ -311,18 +231,10 @@ export default function DispatchCircuits() {
   const [expandedCircuits, setExpandedCircuits] = useState<Set<string>>(() =>
     loadStringSet(LS_EXPANDED_CIRCUITS_KEY)
   );
-  const [expandedPeriods, setExpandedPeriods] = useState<Set<string>>(() =>
-    loadStringSet(LS_EXPANDED_PERIODS_KEY)
-  );
-
   useEffect(() => saveCarrierSet(carrierSet), [carrierSet]);
   useEffect(
     () => saveStringSet(LS_EXPANDED_CIRCUITS_KEY, expandedCircuits),
     [expandedCircuits]
-  );
-  useEffect(
-    () => saveStringSet(LS_EXPANDED_PERIODS_KEY, expandedPeriods),
-    [expandedPeriods]
   );
 
   function toggleCarrier(code: Carrier) {
@@ -346,17 +258,6 @@ export default function DispatchCircuits() {
 
   function toggleCircuit(key: string) {
     setExpandedCircuits((prev) => {
-      const next = new Set(prev);
-
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-
-      return next;
-    });
-  }
-
-  function togglePeriod(key: string) {
-    setExpandedPeriods((prev) => {
       const next = new Set(prev);
 
       if (next.has(key)) next.delete(key);
@@ -419,24 +320,11 @@ export default function DispatchCircuits() {
   const hasExpandedCircuit = expandedCircuits.size > 0;
 
   function expandAll() {
-    const circuitKeys = new Set<string>();
-    const periodKeys = new Set<string>();
-
-    for (const group of groups) {
-      circuitKeys.add(group.key);
-
-      for (const period of group.periods) {
-        periodKeys.add(`${group.key}|${period.period}`);
-      }
-    }
-
-    setExpandedCircuits(circuitKeys);
-    setExpandedPeriods(periodKeys);
+    setExpandedCircuits(new Set(groups.map((group) => group.key)));
   }
 
   function collapseAll() {
     setExpandedCircuits(new Set<string>());
-    setExpandedPeriods(new Set<string>());
   }
 
   if (!isDesktop()) {
@@ -478,7 +366,7 @@ export default function DispatchCircuits() {
           <button
             type="button"
             style={btnPrimary}
-            onClick={() => nav("/admin/circuits/import-busplanner")}
+            onClick={() => nav("/admin/circuit-tablette-gps/import-busplanner")}
           >
             Importer BusPlanner
           </button>
@@ -648,131 +536,71 @@ export default function DispatchCircuits() {
 
                   {circuitExpanded ? (
                     <div style={circuitBody}>
-                      {group.periods.map((period) => {
-                        const periodKey = `${group.key}|${period.period}`;
-                        const periodExpanded =
-                          expandedPeriods.has(periodKey);
+                      <div style={{ overflowX: "auto" }}>
+                        <table
+                          style={{
+                            width: "100%",
+                            borderCollapse: "collapse",
+                            fontSize: 15,
+                            minWidth: 980,
+                          }}
+                        >
+                          <thead>
+                            <tr style={{ background: "#f5f5f5" }}>
+                              <Th>Parcours</Th>
+                              <Th>Heure départ</Th>
+                              <Th>Heure retour</Th>
+                              <Th>Durée</Th>
+                              <Th># Arrêts</Th>
+                              <Th># Transferts</Th>
+                              <Th>KM</Th>
+                              <Th>Unité</Th>
+                              <Th>Conducteur</Th>
+                            </tr>
+                          </thead>
 
-                        return (
-                          <div key={periodKey} style={periodCard}>
-                            <button
-                              type="button"
-                              onClick={() => togglePeriod(periodKey)}
-                              style={periodHeader}
-                            >
-                              <span style={chevron}>
-                                {periodExpanded ? "⌄" : "›"}
-                              </span>
+                          <tbody>
+                            {group.rows.map((row, index) => {
+                              const duration = durationMinutes(
+                                row.heure_depart ?? null,
+                                row.heure_retour ?? null
+                              );
 
-                              <span style={{ minWidth: 110, textAlign: "left" }}>
-                                <span
+                              return (
+                                <tr
+                                  key={row.circuit_id}
+                                  onDoubleClick={() =>
+                                    nav(`/admin/circuit-tablette-gps/${row.circuit_id}`)
+                                  }
                                   style={{
-                                    display: "block",
-                                    fontWeight: 400,
-                                    fontSize: 17,
+                                    cursor: "pointer",
+                                    background: index % 2 === 0 ? "#fff" : "#fafafa",
                                   }}
+                                  title="Double-clique pour modifier"
                                 >
-                                  {periodLabel(period.period)}
-                                </span>
-
-                                <span style={muted}>
-                                  {period.rows.length} parcours
-                                </span>
-                              </span>
-
-                              <Metric
-                                label="Plage"
-                                value={`${fmtHM(
-                                  period.firstDeparture
-                                )} → ${fmtHM(period.lastReturn)}`}
-                              />
-                              <Metric
-                                label="Arrêts"
-                                value={String(period.totalStops)}
-                              />
-                              <Metric
-                                label="KM"
-                                value={period.totalKm.toFixed(2)}
-                              />
-                            </button>
-
-                            {periodExpanded ? (
-                              <div style={{ overflowX: "auto" }}>
-                                <table
-                                  style={{
-                                    width: "100%",
-                                    borderCollapse: "collapse",
-                                    fontSize: 15,
-                                    minWidth: 980,
-                                  }}
-                                >
-                                  <thead>
-                                    <tr style={{ background: "#f5f5f5" }}>
-                                      <Th>Parcours</Th>
-                                      <Th>Heure départ</Th>
-                                      <Th>Heure retour</Th>
-                                      <Th>Durée</Th>
-                                      <Th># Arrêts</Th>
-                                      <Th># Transferts</Th>
-                                      <Th>KM</Th>
-                                      <Th>Unité</Th>
-                                      <Th>Conducteur</Th>
-                                    </tr>
-                                  </thead>
-
-                                  <tbody>
-                                    {period.rows.map((row, index) => {
-                                      const duration = durationMinutes(
-                                        row.heure_depart ?? null,
-                                        row.heure_retour ?? null
-                                      );
-
-                                      return (
-                                        <tr
-                                          key={row.circuit_id}
-                                          onDoubleClick={() =>
-                                            nav(
-                                              `/admin/circuits/${row.circuit_id}`
-                                            )
-                                          }
-                                          style={{
-                                            cursor: "pointer",
-                                            background:
-                                              index % 2 === 0
-                                                ? "#fff"
-                                                : "#fafafa",
-                                          }}
-                                          title="Double-clique pour modifier"
-                                        >
-                                          <Td style={{ fontWeight: 900 }}>
-                                            {row.nom}
-                                          </Td>
-                                          <Td>{fmtHM(row.heure_depart)}</Td>
-                                          <Td>{fmtHM(row.heure_retour)}</Td>
-                                          <Td>{fmtDuration(duration)}</Td>
-                                          <Td>{row.nb_arrets ?? 0}</Td>
-                                          <Td>{row.nb_transferts ?? 0}</Td>
-                                          <Td>
-                                            {Number(
-                                              row.km_total ?? 0
-                                            ).toFixed(2)}
-                                          </Td>
-                                          <Td style={{ fontWeight: 800 }}>
-                                            {row.unite ?? "—"}
-                                          </Td>
-                                          <Td style={{ fontWeight: 800 }}>
-                                            {row.conducteur ?? "—"}
-                                          </Td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })}
+                                  <Td style={{ fontWeight: 900 }}>
+                                    {row.nom}
+                                  </Td>
+                                  <Td>{fmtHM(row.heure_depart)}</Td>
+                                  <Td>{fmtHM(row.heure_retour)}</Td>
+                                  <Td>{fmtDuration(duration)}</Td>
+                                  <Td>{row.nb_arrets ?? 0}</Td>
+                                  <Td>{row.nb_transferts ?? 0}</Td>
+                                  <Td>
+                                    {Number(row.km_total ?? 0).toFixed(2)}
+                                  </Td>
+                                  <Td style={{ fontWeight: 800 }}>
+                                    {row.unite ?? "—"}
+                                  </Td>
+                                  <Td style={{ fontWeight: 800 }}>
+                                    {row.conducteur ?? "—"}
+                                  </Td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   ) : null}
                 </section>
@@ -782,8 +610,8 @@ export default function DispatchCircuits() {
       </div>
 
       <div style={{ color: "#6b7280", fontSize: 12 }}>
-        Ouvre un circuit, puis AM ou PM. Double-clique sur un parcours pour le
-        modifier.
+        Ouvre un circuit pour voir directement ses parcours (ex. 106 AM et 106 PM).
+        Double-clique sur un parcours pour le modifier.
       </div>
     </div>
   );
@@ -936,32 +764,9 @@ const circuitHeader: React.CSSProperties = {
 };
 
 const circuitBody: React.CSSProperties = {
-  display: "grid",
-  gap: 6,
-  padding: "6px 8px 8px 30px",
+  padding: "0 8px 8px 30px",
   background: "#fafafa",
   borderTop: "1px solid #eeeeee",
-};
-
-const periodCard: React.CSSProperties = {
-  border: "1px solid #e5e7eb",
-  borderRadius: 7,
-  overflow: "hidden",
-  background: "#fff",
-};
-
-const periodHeader: React.CSSProperties = {
-  width: "100%",
-  display: "grid",
-  gridTemplateColumns: "20px 110px 150px 78px 86px",
-  alignItems: "center",
-  columnGap: 8,
-  padding: "7px 10px",
-  border: 0,
-  background: "#f8fafc",
-  color: "#0f172a",
-  cursor: "pointer",
-  font: "inherit",
 };
 
 const chevron: React.CSSProperties = {
@@ -970,13 +775,6 @@ const chevron: React.CSSProperties = {
   fontSize: 20,
   lineHeight: 1,
   fontWeight: 700,
-};
-
-const muted: React.CSSProperties = {
-  display: "block",
-  color: "#64748b",
-  fontSize: 13,
-  fontWeight: 500,
 };
 
 const metricLabel: React.CSSProperties = {

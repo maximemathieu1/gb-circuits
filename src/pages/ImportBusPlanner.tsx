@@ -1295,7 +1295,7 @@ export default function ImportBusPlanner() {
             <button
               type="button"
               style={btn("ghost")}
-              onClick={() => navigate("/admin/circuits")}
+              onClick={() => navigate("/admin/circuit-tablette-gps")}
             >
               Retour
             </button>
@@ -1869,7 +1869,7 @@ export default function ImportBusPlanner() {
                         style={{ ...btn("primary"), marginTop: 10 }}
                         onClick={() =>
                           navigate(
-                            `/admin/circuits/${encodeURIComponent(
+                            `/admin/circuit-tablette-gps/${encodeURIComponent(
                               response.circuit_id!
                             )}`
                           )

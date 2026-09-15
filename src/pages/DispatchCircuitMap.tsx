@@ -236,7 +236,7 @@ if (m.getSource("stops")) {
   return (
     <div style={{ padding: 12, display: "grid", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <button style={btnGhost} onClick={() => nav(`/admin/circuits/${circuitId}`)}>
+        <button style={btnGhost} onClick={() => nav(`/admin/circuit-tablette-gps/${circuitId}`)}>
           ← Retour
         </button>
         <h2 style={{ margin: 0 }}>{title}</h2>

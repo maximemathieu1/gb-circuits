@@ -133,7 +133,7 @@ export default function DispatchStopNote() {
       const p = (data?.points ?? []).find((x: any) => String(x.id) === pointId);
       if (!p) {
         alert("Arrêt introuvable.");
-        nav(`/admin/circuits/${circuitId}`);
+        nav(`/admin/circuit-tablette-gps/${circuitId}`);
         return;
       }
 
@@ -300,7 +300,7 @@ async function deletePendingImagesFromStorage(urls: string[]) {
 
       setPendingDeleteImages([]);
       alert("Note sauvegardée ✅");
-      nav(`/admin/circuits/${circuitId}`);
+      nav(`/admin/circuit-tablette-gps/${circuitId}`);
     } catch (e: any) {
       alert(e?.message ?? "Erreur sauvegarde note");
     } finally {
@@ -329,7 +329,7 @@ async function deletePendingImagesFromStorage(urls: string[]) {
 
       setPendingDeleteImages([]);
       alert("Note supprimée ✅");
-      nav(`/admin/circuits/${circuitId}`);
+      nav(`/admin/circuit-tablette-gps/${circuitId}`);
     } catch (e: any) {
       alert(e?.message ?? "Erreur suppression note");
     } finally {
@@ -496,7 +496,7 @@ async function deletePendingImagesFromStorage(urls: string[]) {
         </div>
 
         <div style={topRight}>
-          <button style={btnGhost} onClick={() => nav(`/admin/circuits/${circuitId}`)} disabled={isBusy}>
+          <button style={btnGhost} onClick={() => nav(`/admin/circuit-tablette-gps/${circuitId}`)} disabled={isBusy}>
             Retour
           </button>
 
