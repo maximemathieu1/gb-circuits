@@ -77,21 +77,125 @@ function validLatLng(lat: number | null, lng: number | null) {
 }
 
 async function reverseGeocode(lat: number, lng: number): Promise<string> {
-  const base = (import.meta as any).env?.VITE_GPS_FUNCTION_URL || "";
-  const token = (import.meta as any).env?.VITE_DISPATCH_SECRET || "";
+  const token = String(
+    (import.meta as any).env?.VITE_MAPBOX_TOKEN ||
+      (import.meta as any).env?.VITE_MAPBOX_ACCESS_TOKEN ||
+      ""
+  ).trim();
 
-  if (!base) throw new Error("VITE_GPS_FUNCTION_URL manquant.");
-  if (!token) throw new Error("DISPATCH_SECRET manquant.");
+  if (!token) {
+    throw new Error(
+      "Token Mapbox manquant: ajoute VITE_MAPBOX_TOKEN (ou VITE_MAPBOX_ACCESS_TOKEN)."
+    );
+  }
 
-  const r = await fetch(`${base.replace(/\/$/, "")}/dispatch-reverse-geocode`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-dispatch-token": token },
-    body: JSON.stringify({ lat, lng }),
+  const params = new URLSearchParams({
+    longitude: String(lng),
+    latitude: String(lat),
+    access_token: token,
+    language: "fr",
+    country: "ca",
+    limit: "1",
   });
 
+  const r = await fetch(
+    `https://api.mapbox.com/search/geocode/v6/reverse?${params.toString()}`
+  );
+
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j?.error || `Erreur reverse geocode (${r.status})`);
-  return String(j?.address ?? "");
+
+  if (!r.ok) {
+    throw new Error(
+      j?.message || j?.error || `Erreur reverse geocode Mapbox (${r.status})`
+    );
+  }
+
+  const feature = Array.isArray(j?.features) ? j.features[0] : null;
+  if (!feature) return "";
+
+  const props = feature?.properties || {};
+
+  return String(
+    props.full_address ||
+      props.place_formatted ||
+      props.name_preferred ||
+      props.name ||
+      feature.place_name ||
+      ""
+  ).trim();
+}
+
+
+async function forwardGeocode(
+  address: string,
+  proximity?: { lat: number; lng: number } | null
+): Promise<{ lat: number; lng: number; label: string }> {
+  const token = String(
+    (import.meta as any).env?.VITE_MAPBOX_TOKEN ||
+      (import.meta as any).env?.VITE_MAPBOX_ACCESS_TOKEN ||
+      ""
+  ).trim();
+
+  if (!token) {
+    throw new Error(
+      "Token Mapbox manquant: ajoute VITE_MAPBOX_TOKEN (ou VITE_MAPBOX_ACCESS_TOKEN)."
+    );
+  }
+
+  const q = String(address || "").trim();
+  if (!q) throw new Error("Entre une adresse à rechercher.");
+
+  const params = new URLSearchParams({
+    q,
+    access_token: token,
+    language: "fr",
+    country: "ca",
+    limit: "1",
+    autocomplete: "false",
+  });
+
+  if (
+    proximity &&
+    Number.isFinite(proximity.lat) &&
+    Number.isFinite(proximity.lng)
+  ) {
+    params.set("proximity", `${proximity.lng},${proximity.lat}`);
+  }
+
+  const r = await fetch(
+    `https://api.mapbox.com/search/geocode/v6/forward?${params.toString()}`
+  );
+
+  const j = await r.json().catch(() => ({}));
+
+  if (!r.ok) {
+    throw new Error(
+      j?.message || j?.error || `Erreur geocodage Mapbox (${r.status})`
+    );
+  }
+
+  const feature = Array.isArray(j?.features) ? j.features[0] : null;
+  if (!feature) throw new Error("Adresse introuvable.");
+
+  const coords = feature?.geometry?.coordinates;
+  const lng = Number(coords?.[0]);
+  const lat = Number(coords?.[1]);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new Error("Coordonnées invalides retournées par Mapbox.");
+  }
+
+  const props = feature?.properties || {};
+  const label = String(
+    props.full_address ||
+      props.place_formatted ||
+      props.name_preferred ||
+      props.name ||
+      feature.place_name ||
+      q
+  ).trim();
+
+  return { lat, lng, label };
 }
 
 function ComboInput({
@@ -269,6 +373,8 @@ export default function DispatchCircuitDetail() {
   const [addStopType, setAddStopType] = useState<StopType>("school");
   const [addLat, setAddLat] = useState("");
   const [addLng, setAddLng] = useState("");
+  const [addAddress, setAddAddress] = useState("");
+  const [geocodingAdd, setGeocodingAdd] = useState(false);
   const [savingInsert, setSavingInsert] = useState(false);
 
   async function loadPicklists() {
@@ -418,6 +524,7 @@ export default function DispatchCircuitDetail() {
     setAddStopType("school");
     setAddLat("");
     setAddLng("");
+    setAddAddress("");
     setAddModalOpen(true);
   }
 
@@ -428,6 +535,7 @@ export default function DispatchCircuitDetail() {
     setAddStopType("school");
     setAddLat("");
     setAddLng("");
+    setAddAddress("");
   }
 
   function copyTargetCoords() {
@@ -439,17 +547,73 @@ export default function DispatchCircuitDetail() {
     if (Number.isFinite(lng)) setAddLng(String(lng));
   }
 
+  async function geocodeAddAddress() {
+    const address = addAddress.trim();
+    if (!address) {
+      alert("Entre une adresse à rechercher.");
+      return;
+    }
+
+    let proximity: { lat: number; lng: number } | null = null;
+    const target = points.find((p) => String(p.id) === String(addTargetId));
+    if (target) {
+      const lat = Number(target.lat);
+      const lng = Number(target.lng);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) proximity = { lat, lng };
+    } else if (points.length) {
+      const lat = Number(points[0]?.lat);
+      const lng = Number(points[0]?.lng);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) proximity = { lat, lng };
+    }
+
+    setGeocodingAdd(true);
+    try {
+      const result = await forwardGeocode(address, proximity);
+      setAddLat(String(result.lat));
+      setAddLng(String(result.lng));
+      if (!addLabel.trim()) setAddLabel(result.label);
+    } catch (e: any) {
+      alert(e?.message ?? "Adresse introuvable");
+    } finally {
+      setGeocodingAdd(false);
+    }
+  }
+
   async function insertStopAtTarget() {
     if (!activeVersion?.id) {
       alert("Aucune version active trouvée.");
       return;
     }
 
-    const lat = parseCoordInput(addLat);
-    const lng = parseCoordInput(addLng);
+    let lat = parseCoordInput(addLat);
+    let lng = parseCoordInput(addLng);
+
+    if ((lat == null || lng == null || !validLatLng(lat, lng)) && addAddress.trim()) {
+      try {
+        let proximity: { lat: number; lng: number } | null = null;
+        const target = points.find((p) => String(p.id) === String(addTargetId));
+        if (target) {
+          const targetLat = Number(target.lat);
+          const targetLng = Number(target.lng);
+          if (Number.isFinite(targetLat) && Number.isFinite(targetLng)) {
+            proximity = { lat: targetLat, lng: targetLng };
+          }
+        }
+
+        const result = await forwardGeocode(addAddress.trim(), proximity);
+        lat = result.lat;
+        lng = result.lng;
+        setAddLat(String(result.lat));
+        setAddLng(String(result.lng));
+        if (!addLabel.trim()) setAddLabel(result.label);
+      } catch (e: any) {
+        alert(e?.message ?? "Adresse introuvable");
+        return;
+      }
+    }
 
     if (lat == null || lng == null || !validLatLng(lat, lng)) {
-      alert("Entre une latitude et une longitude valides pour le nouvel arrêt.");
+      alert("Entre une adresse ou une latitude/longitude valides pour le nouvel arrêt.");
       return;
     }
 
@@ -557,18 +721,18 @@ export default function DispatchCircuitDetail() {
     if (!confirm("Supprimer ce circuit ?")) return;
     try {
       await deleteCircuit(circuitId);
-      nav("/admin/circuit-tablette-gps");
+      nav("/admin/circuits");
     } catch (e: any) {
       alert(e?.message ?? "Erreur suppression");
     }
   }
 
   function onViewCircuit() {
-    nav(`/admin/circuit-tablette-gps/${circuitId}/map`);
+    nav(`/admin/circuits/${circuitId}/map`);
   }
 
   function onPrintCircuit() {
-    nav(`/admin/circuit-tablette-gps/${circuitId}/print`);
+    nav(`/admin/circuits/${circuitId}/print`);
   }
 
   return (
@@ -584,7 +748,7 @@ export default function DispatchCircuitDetail() {
         </div>
 
         <div style={topRight}>
-          <button style={btnGhost} onClick={() => nav("/admin/circuit-tablette-gps")}>
+          <button style={btnGhost} onClick={() => nav("/admin/circuits")}>
             Retour
           </button>
 
@@ -729,7 +893,7 @@ export default function DispatchCircuitDetail() {
                   style={notePresent ? btnNoteActive : btnNote}
                   type="button"
                   disabled={savingAll || savingInsert}
-                  onClick={() => nav(`/admin/circuit-tablette-gps/${circuitId}/stops/${p.id}/note`)}
+                  onClick={() => nav(`/admin/circuits/${circuitId}/stops/${p.id}/note`)}
                   title="Gérer la note"
                 >
                   Ajouter/Consulter Note
@@ -825,12 +989,39 @@ export default function DispatchCircuitDetail() {
               )}
 
               <div style={field}>
+                <label style={fieldLabel}>Adresse</label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    value={addAddress}
+                    onChange={(e) => setAddAddress(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (!geocodingAdd && !savingInsert) void geocodeAddAddress();
+                      }
+                    }}
+                    style={{ ...input, flex: 1 }}
+                    placeholder="Ex. 1250 90e Rue, Saint-Georges, QC"
+                    disabled={savingInsert || geocodingAdd}
+                  />
+                  <button
+                    type="button"
+                    style={btnGhost}
+                    onClick={geocodeAddAddress}
+                    disabled={savingInsert || geocodingAdd || !addAddress.trim()}
+                  >
+                    {geocodingAdd ? "Recherche…" : "Trouver coordonnées"}
+                  </button>
+                </div>
+              </div>
+
+              <div style={field}>
                 <label style={fieldLabel}>Libellé</label>
                 <input
                   value={addLabel}
                   onChange={(e) => setAddLabel(e.target.value)}
                   style={input}
-                  placeholder="Ex. 1250 90e Rue"
+                  placeholder="Ex. Entrée principale / 1250 90e Rue"
                   disabled={savingInsert}
                 />
               </div>
@@ -871,7 +1062,7 @@ export default function DispatchCircuitDetail() {
               </div>
 
               <div style={modalHint}>
-                Le nouvel arrêt sera créé exactement à la latitude/longitude saisies. Pour qu’il colle à ta trace, entre les coordonnées directement sur le trajet voulu.
+                Tu peux entrer seulement l’adresse : Mapbox trouvera automatiquement la latitude et la longitude. Les coordonnées restent modifiables manuellement au besoin.
               </div>
             </div>
 
@@ -879,7 +1070,7 @@ export default function DispatchCircuitDetail() {
               <button type="button" style={btnGhost} onClick={closeAddModal} disabled={savingInsert}>
                 Annuler
               </button>
-              <button type="button" style={btnPrimary} onClick={insertStopAtTarget} disabled={savingInsert}>
+              <button type="button" style={btnPrimary} onClick={insertStopAtTarget} disabled={savingInsert || geocodingAdd}>
                 {savingInsert ? "Ajout…" : "Ajouter"}
               </button>
             </div>
