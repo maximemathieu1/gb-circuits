@@ -721,18 +721,18 @@ export default function DispatchCircuitDetail() {
     if (!confirm("Supprimer ce circuit ?")) return;
     try {
       await deleteCircuit(circuitId);
-      nav("/admin/circuits");
+      nav("/admin/circuit-tablette-gps");
     } catch (e: any) {
       alert(e?.message ?? "Erreur suppression");
     }
   }
 
   function onViewCircuit() {
-    nav(`/admin/circuits/${circuitId}/map`);
+    nav(`/admin/circuit-tablette-gps/${circuitId}/map`);
   }
 
   function onPrintCircuit() {
-    nav(`/admin/circuits/${circuitId}/print`);
+    nav(`/admin/circuit-tablette-gps/${circuitId}/print`);
   }
 
   return (
@@ -748,7 +748,7 @@ export default function DispatchCircuitDetail() {
         </div>
 
         <div style={topRight}>
-          <button style={btnGhost} onClick={() => nav("/admin/circuits")}>
+          <button style={btnGhost} onClick={() => nav("/admin/circuit-tablette-gps")}>
             Retour
           </button>
 
@@ -893,7 +893,7 @@ export default function DispatchCircuitDetail() {
                   style={notePresent ? btnNoteActive : btnNote}
                   type="button"
                   disabled={savingAll || savingInsert}
-                  onClick={() => nav(`/admin/circuits/${circuitId}/stops/${p.id}/note`)}
+                  onClick={() => nav(`/admin/circuit-tablette-gps/${circuitId}/stops/${p.id}/note`)}
                   title="Gérer la note"
                 >
                   Ajouter/Consulter Note
