@@ -2456,6 +2456,10 @@ export default function CircuitsScolairesPage() {
         >
           <div
             className="modal-card"
+            style={{
+              width: "min(1240px, calc(100vw - 32px))",
+              maxWidth: "none",
+            }}
             onMouseDown={(e) =>
               e.stopPropagation()
             }
@@ -2977,7 +2981,7 @@ export default function CircuitsScolairesPage() {
                         <th>Départ AM</th>
                         <th>Retour AM</th>
                         <th>KM AM</th>
-                        <th>Départ PM</th>
+                        <th style={{ borderLeft: "2px solid #cbd5e1", paddingLeft: 14 }}>Départ PM</th>
                         <th>Retour PM</th>
                         <th>KM PM</th>
                         <th>KM régulier</th>
@@ -3004,7 +3008,7 @@ export default function CircuitsScolairesPage() {
                             <td>{formatHeureSamsara(jour.departAm)}</td>
                             <td>{formatHeureSamsara(jour.retourAm)}</td>
                             <td>{jour.kmAm.toFixed(1)}</td>
-                            <td>{formatHeureSamsara(jour.departPm)}</td>
+                            <td style={{ borderLeft: "2px solid #e2e8f0", paddingLeft: 14 }}>{formatHeureSamsara(jour.departPm)}</td>
                             <td>{formatHeureSamsara(jour.retourPm)}</td>
                             <td>{jour.kmPm.toFixed(1)}</td>
                             <td><strong>{jour.kmRegulier.toFixed(1)}</strong></td>
