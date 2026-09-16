@@ -2999,9 +2999,8 @@ export default function CircuitsScolairesPage() {
                         >
                           PM
                         </th>
-                        <th rowSpan={2} style={{ verticalAlign: "middle" }}>KM régulier</th>
-                        <th rowSpan={2} style={{ verticalAlign: "middle" }}>Hors régulier</th>
-                        <th rowSpan={2} style={{ verticalAlign: "middle" }}>H régulières</th>
+                        <th rowSpan={2} style={{ verticalAlign: "middle", borderLeft: "1px solid #cbd5e1", paddingLeft: 14 }}>KM régulier</th>
+                                                <th rowSpan={2} style={{ verticalAlign: "middle" }}>H régulières</th>
                         <th rowSpan={2} style={{ verticalAlign: "middle" }}>VAD</th>
                         <th rowSpan={2} style={{ verticalAlign: "middle" }}>H à payer</th>
                         <th rowSpan={2} style={{ verticalAlign: "middle" }}>Statut</th>
@@ -3018,9 +3017,9 @@ export default function CircuitsScolairesPage() {
                     </thead>
                     <tbody>
                       {samsaraChargement ? (
-                        <tr><td colSpan={14} className="muted">Chargement Samsara…</td></tr>
+                        <tr><td colSpan={13} className="muted">Chargement Samsara…</td></tr>
                       ) : samsaraJoursVisibles.length === 0 ? (
-                        <tr><td colSpan={14} className="muted">Aucune donnée pour cette semaine. Clique sur « Actualiser ce circuit ».</td></tr>
+                        <tr><td colSpan={13} className="muted">Aucune donnée pour cette semaine. Clique sur « Actualiser ce circuit ».</td></tr>
                       ) : (
                         samsaraJoursVisibles.map((jour) => {
                           const heures = calculHeuresJour(jour);
@@ -3034,8 +3033,7 @@ export default function CircuitsScolairesPage() {
                             <td style={{ borderLeft: "1px solid #e2e8f0", paddingLeft: 12 }}>{formatHeureSamsara(jour.departPm)}</td>
                             <td>{formatHeureSamsara(jour.retourPm)}</td>
                             <td>{jour.kmPm.toFixed(1)}</td>
-                            <td><strong>{jour.kmRegulier.toFixed(1)}</strong></td>
-                            <td>{jour.kmHorsRegulier.toFixed(1)}</td>
+                            <td style={{ borderLeft: "1px solid #e2e8f0", paddingLeft: 14 }}><strong>{jour.kmRegulier.toFixed(1)}</strong></td>
                             <td>{heures.heuresRegulieres != null ? heures.heuresRegulieres.toFixed(2) : "—"}</td>
                             <td>{heures.vad != null ? heures.vad.toFixed(2) : "—"}</td>
                             <td><strong>{heures.heuresAPayer != null ? heures.heuresAPayer.toFixed(2) : "—"}</strong></td>
