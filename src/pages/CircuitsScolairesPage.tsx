@@ -416,6 +416,7 @@ export default function CircuitsScolairesPage() {
   const [samsaraAttentes, setSamsaraAttentes] = useState<CircuitSamsaraAttente[]>([]);
   const [attentesChargement, setAttentesChargement] = useState(false);
   const [filtreAttentes, setFiltreAttentes] = useState<"recurrent" | "occasionnel" | "tous">("tous");
+  const [seuilAttenteMinutes, setSeuilAttenteMinutes] = useState(25);
   const [, setSamsaraConfig] =
   useState<CircuitSamsaraConfig | null>(null);
   const [samsaraChargement, setSamsaraChargement] = useState(false);
@@ -752,6 +753,7 @@ export default function CircuitsScolairesPage() {
     setSamsaraJours([]);
     setSamsaraAttentes([]);
     setSamsaraConfig(null);
+    setSeuilAttenteMinutes(25);
     setModalCircuitOuvert(true);
   }
 
@@ -848,6 +850,9 @@ export default function CircuitsScolairesPage() {
             }
           : null
       );
+      setSeuilAttenteMinutes(
+        Math.max(0, Math.min(180, Number(configData?.attente_seuil_minutes ?? 25)))
+      );
 
       setSamsaraJours(
         (joursData || []).map((row: any) => ({
@@ -943,6 +948,7 @@ export default function CircuitsScolairesPage() {
             start_date: startDate,
             end_date: endDate,
             tolerance_minutes: 15,
+            wait_threshold_minutes: circuitId ? seuilAttenteMinutes : null,
           },
         }
       );
@@ -1075,6 +1081,7 @@ export default function CircuitsScolairesPage() {
 
   const attentesGroupes = useMemo(() => {
     return [...samsaraAttentes]
+      .filter((attente) => attente.dureeMinutes > seuilAttenteMinutes)
       .filter((attente) => {
         if (filtreAttentes === "recurrent") return attente.recurrent;
         if (filtreAttentes === "occasionnel") return !attente.recurrent;
@@ -1085,7 +1092,7 @@ export default function CircuitsScolairesPage() {
         if (dateCmp !== 0) return dateCmp;
         return Date.parse(b.arrivee) - Date.parse(a.arrivee);
       });
-  }, [samsaraAttentes, filtreAttentes]);
+  }, [samsaraAttentes, filtreAttentes, seuilAttenteMinutes]);
 
   /*
    * CIRCUIT - ENREGISTRER
@@ -3200,7 +3207,7 @@ export default function CircuitsScolairesPage() {
                   <div>
                     <div style={{ fontWeight: 900, fontSize: 16 }}>Temps d’attente quotidiens</div>
                     <div className="muted" style={{ marginTop: 3, fontSize: 12 }}>
-                      Tous les arrêts de 15 minutes et plus détectés pendant les journées classées régulières. La récurrence est seulement un filtre secondaire.
+                      Tous les arrêts de plus de {seuilAttenteMinutes} minutes détectés pendant les journées classées régulières. La récurrence est seulement un filtre secondaire.
                     </div>
                   </div>
 
@@ -3216,6 +3223,25 @@ export default function CircuitsScolairesPage() {
                         <option value="occasionnel">Occasionnels seulement</option>
                         <option value="tous">Tous</option>
                       </select>
+                    </div>
+                    <div className="field" style={{ minWidth: 145 }}>
+                      <div className="label">Attente &gt; (min)</div>
+                      <input
+                        className="input"
+                        type="number"
+                        min={0}
+                        max={180}
+                        step={1}
+                        value={seuilAttenteMinutes}
+                        onChange={(e) => {
+                          const value = Number(e.target.value);
+                          setSeuilAttenteMinutes(
+                            Number.isFinite(value)
+                              ? Math.max(0, Math.min(180, Math.round(value)))
+                              : 25
+                          );
+                        }}
+                      />
                     </div>
                     <button
                       className="btn-primary"
@@ -3237,7 +3263,7 @@ export default function CircuitsScolairesPage() {
                 >
                   {[
                     ["Attentes détectées", String(samsaraAttentes.length)],
-                    ["Seuil d’attente", "15 min"],
+                    ["Seuil d’attente", `> ${seuilAttenteMinutes} min`],
                     ["Journées ciblées", "Régulières"],
                   ].map(([label, value]) => (
                     <div
@@ -3305,7 +3331,7 @@ export default function CircuitsScolairesPage() {
                 </div>
 
                 <div className="muted" style={{ fontSize: 12 }}>
-                  Détection quotidienne : seulement les journées régulières, arrêt ≥ 15 min. Le statut récurrent est calculé ensuite et ne bloque jamais l’affichage dans « Tous ».
+                  Détection quotidienne : seulement les journées régulières, arrêt &gt; {seuilAttenteMinutes} min. Le statut récurrent est calculé ensuite et ne bloque jamais l’affichage dans « Tous ».
                 </div>
               </div>
             )}
