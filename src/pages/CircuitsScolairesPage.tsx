@@ -256,6 +256,16 @@ function jourSamsaraAvecDonnees(jour: CircuitSamsaraJour) {
   );
 }
 
+function jourSamsaraCompletPourMoyenne(jour: CircuitSamsaraJour) {
+  const amComplet = Boolean(jour.departAm && jour.retourAm);
+  const pmComplet = Boolean(jour.departPm && jour.retourPm);
+
+  // Une journée n'entre dans les moyennes qu'une fois les deux périodes
+  // AM et PM complétées. Cela évite qu'une journée en cours avec 0 km
+  // fasse artificiellement baisser la moyenne.
+  return amComplet && pmComplet;
+}
+
 function formatDateSamsara(value: string) {
   const d = new Date(`${value}T12:00:00`);
   if (Number.isNaN(d.getTime())) return value;
@@ -361,8 +371,7 @@ export default function CircuitsScolairesPage() {
 
   const [ongletCircuit, setOngletCircuit] = useState<"infos" | "samsara">("infos");
   const [samsaraJours, setSamsaraJours] = useState<CircuitSamsaraJour[]>([]);
-  const [, setSamsaraConfig] =
-  useState<CircuitSamsaraConfig | null>(null);
+  const [samsaraConfig, setSamsaraConfig] = useState<CircuitSamsaraConfig | null>(null);
   const [samsaraChargement, setSamsaraChargement] = useState(false);
   const [samsaraSync, setSamsaraSync] = useState(false);
   const [afficherExclues, setAfficherExclues] = useState(false);
@@ -877,17 +886,25 @@ export default function CircuitsScolairesPage() {
   const samsaraJoursInclus = samsaraJours.filter((jour) => !jour.exclue);
   const samsaraJoursAvecDonnees = samsaraJoursInclus.filter(jourSamsaraAvecDonnees);
 
-  const heuresPayablesIncluses = samsaraJoursAvecDonnees
+  // IMPORTANT :
+  // Les moyennes utilisent seulement les journées COMPLÈTES (AM + PM).
+  // Une journée en cours ou partielle reste visible dans le tableau,
+  // mais elle ne compte pas encore dans KM moyen / jour ni Heures moy. / jour.
+  const samsaraJoursComplets = samsaraJoursInclus.filter(
+    jourSamsaraCompletPourMoyenne
+  );
+
+  const heuresPayablesIncluses = samsaraJoursComplets
     .map((jour) => calculHeuresJour(jour).heuresAPayer)
     .filter((v): v is number => v != null);
 
   const samsaraResume = {
     kmMoyen:
-      samsaraJoursAvecDonnees.length > 0
-        ? samsaraJoursAvecDonnees.reduce((sum, row) => sum + row.kmRegulier, 0) /
-          samsaraJoursAvecDonnees.length
+      samsaraJoursComplets.length > 0
+        ? samsaraJoursComplets.reduce((sum, row) => sum + row.kmRegulier, 0) /
+          samsaraJoursComplets.length
         : 0,
-    kmTotal: samsaraJoursAvecDonnees.reduce((sum, row) => sum + row.kmRegulier, 0),
+    kmTotal: samsaraJoursComplets.reduce((sum, row) => sum + row.kmRegulier, 0),
     horsTotal: samsaraJoursAvecDonnees.reduce((sum, row) => sum + row.kmHorsRegulier, 0),
     heuresMoyennes:
       heuresPayablesIncluses.length > 0
