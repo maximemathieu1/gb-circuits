@@ -2517,7 +2517,7 @@ export default function CircuitsScolairesPage() {
                 disabled={!circuitActifId}
                 title={!circuitActifId ? "Enregistre d’abord le circuit" : "Analyse des heures et kilomètres réels"}
               >
-                Analyse Samsara
+                Heures/KM
               </button>
             </div>
 
@@ -2977,20 +2977,43 @@ export default function CircuitsScolairesPage() {
                   <table className="list">
                     <thead>
                       <tr>
-                        <th>Date</th>
-                        <th>Départ AM</th>
-                        <th>Retour AM</th>
-                        <th>KM AM</th>
-                        <th style={{ borderLeft: "2px solid #cbd5e1", paddingLeft: 14 }}>Départ PM</th>
-                        <th>Retour PM</th>
-                        <th>KM PM</th>
-                        <th>KM régulier</th>
-                        <th>Hors régulier</th>
-                        <th>H régulières</th>
-                        <th>VAD</th>
-                        <th>H à payer</th>
-                        <th>Statut</th>
-                        <th></th>
+                        <th rowSpan={2} style={{ verticalAlign: "middle" }}>Date</th>
+                        <th
+                          colSpan={3}
+                          style={{
+                            textAlign: "center",
+                            background: "#f8fafc",
+                            borderBottom: "1px solid #e2e8f0",
+                          }}
+                        >
+                          AM
+                        </th>
+                        <th
+                          colSpan={3}
+                          style={{
+                            textAlign: "center",
+                            background: "#f8fafc",
+                            borderLeft: "1px solid #cbd5e1",
+                            borderBottom: "1px solid #e2e8f0",
+                          }}
+                        >
+                          PM
+                        </th>
+                        <th rowSpan={2} style={{ verticalAlign: "middle" }}>KM régulier</th>
+                        <th rowSpan={2} style={{ verticalAlign: "middle" }}>Hors régulier</th>
+                        <th rowSpan={2} style={{ verticalAlign: "middle" }}>H régulières</th>
+                        <th rowSpan={2} style={{ verticalAlign: "middle" }}>VAD</th>
+                        <th rowSpan={2} style={{ verticalAlign: "middle" }}>H à payer</th>
+                        <th rowSpan={2} style={{ verticalAlign: "middle" }}>Statut</th>
+                        <th rowSpan={2}></th>
+                      </tr>
+                      <tr>
+                        <th>Départ</th>
+                        <th>Retour</th>
+                        <th>KM</th>
+                        <th style={{ borderLeft: "1px solid #cbd5e1", paddingLeft: 12 }}>Départ</th>
+                        <th>Retour</th>
+                        <th>KM</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3008,7 +3031,7 @@ export default function CircuitsScolairesPage() {
                             <td>{formatHeureSamsara(jour.departAm)}</td>
                             <td>{formatHeureSamsara(jour.retourAm)}</td>
                             <td>{jour.kmAm.toFixed(1)}</td>
-                            <td style={{ borderLeft: "2px solid #e2e8f0", paddingLeft: 14 }}>{formatHeureSamsara(jour.departPm)}</td>
+                            <td style={{ borderLeft: "1px solid #e2e8f0", paddingLeft: 12 }}>{formatHeureSamsara(jour.departPm)}</td>
                             <td>{formatHeureSamsara(jour.retourPm)}</td>
                             <td>{jour.kmPm.toFixed(1)}</td>
                             <td><strong>{jour.kmRegulier.toFixed(1)}</strong></td>
