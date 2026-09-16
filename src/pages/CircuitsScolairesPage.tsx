@@ -197,6 +197,65 @@ function formatHeureSamsara(value: string | null) {
   }).format(d);
 }
 
+
+function minutesEntreHeures(depart: string | null, retour: string | null): number | null {
+  if (!depart || !retour) return null;
+
+  const d = new Date(depart);
+  const r = new Date(retour);
+
+  if (Number.isNaN(d.getTime()) || Number.isNaN(r.getTime())) return null;
+
+  const minutes = (r.getTime() - d.getTime()) / 60000;
+  return minutes >= 0 ? minutes : null;
+}
+
+function arrondirQuartHeureDecimal(heures: number) {
+  return Math.round(heures * 4) / 4;
+}
+
+function calculHeuresJour(jour: CircuitSamsaraJour) {
+  const amMinutes = minutesEntreHeures(jour.departAm, jour.retourAm);
+  const pmMinutes = minutesEntreHeures(jour.departPm, jour.retourPm);
+
+  const segmentsComplets = [amMinutes, pmMinutes].filter(
+    (v): v is number => v != null
+  );
+
+  if (segmentsComplets.length === 0) {
+    return {
+      heuresRegulieres: null as number | null,
+      vad: null as number | null,
+      heuresAPayer: null as number | null,
+    };
+  }
+
+  const heuresBrutes =
+    segmentsComplets.reduce((sum, minutes) => sum + minutes, 0) / 60;
+
+  const heuresRegulieres = arrondirQuartHeureDecimal(heuresBrutes);
+  const vad = 0.25;
+
+  return {
+    heuresRegulieres,
+    vad,
+    heuresAPayer: heuresRegulieres + vad,
+  };
+}
+
+function jourSamsaraAvecDonnees(jour: CircuitSamsaraJour) {
+  return Boolean(
+    jour.departAm ||
+      jour.retourAm ||
+      jour.departPm ||
+      jour.retourPm ||
+      jour.kmAm > 0 ||
+      jour.kmPm > 0 ||
+      jour.kmRegulier > 0 ||
+      jour.kmHorsRegulier > 0
+  );
+}
+
 function formatDateSamsara(value: string) {
   const d = new Date(`${value}T12:00:00`);
   if (Number.isNaN(d.getTime())) return value;
@@ -815,14 +874,26 @@ export default function CircuitsScolairesPage() {
   );
 
   const samsaraJoursInclus = samsaraJours.filter((jour) => !jour.exclue);
+  const samsaraJoursAvecDonnees = samsaraJoursInclus.filter(jourSamsaraAvecDonnees);
+
+  const heuresPayablesIncluses = samsaraJoursAvecDonnees
+    .map((jour) => calculHeuresJour(jour).heuresAPayer)
+    .filter((v): v is number => v != null);
 
   const samsaraResume = {
     kmMoyen:
-      samsaraJoursInclus.length > 0
-        ? samsaraJoursInclus.reduce((sum, row) => sum + row.kmRegulier, 0) / samsaraJoursInclus.length
+      samsaraJoursAvecDonnees.length > 0
+        ? samsaraJoursAvecDonnees.reduce((sum, row) => sum + row.kmRegulier, 0) /
+          samsaraJoursAvecDonnees.length
         : 0,
-    kmTotal: samsaraJoursInclus.reduce((sum, row) => sum + row.kmRegulier, 0),
-    horsTotal: samsaraJoursInclus.reduce((sum, row) => sum + row.kmHorsRegulier, 0),
+    kmTotal: samsaraJoursAvecDonnees.reduce((sum, row) => sum + row.kmRegulier, 0),
+    horsTotal: samsaraJoursAvecDonnees.reduce((sum, row) => sum + row.kmHorsRegulier, 0),
+    heuresMoyennes:
+      heuresPayablesIncluses.length > 0
+        ? heuresPayablesIncluses.reduce((sum, value) => sum + value, 0) /
+          heuresPayablesIncluses.length
+        : 0,
+    heuresTotal: heuresPayablesIncluses.reduce((sum, value) => sum + value, 0),
   };
 
   /*
@@ -2776,6 +2847,8 @@ export default function CircuitsScolairesPage() {
                     ["KM moyen / jour", `${samsaraResume.kmMoyen.toFixed(1)} km`],
                     ["KM régulier semaine", `${samsaraResume.kmTotal.toFixed(1)} km`],
                     ["KM hors régulier", `${samsaraResume.horsTotal.toFixed(1)} km`],
+                    ["Heures moy. / jour", `${samsaraResume.heuresMoyennes.toFixed(2)} h`],
+                    ["Heures à payer semaine", `${samsaraResume.heuresTotal.toFixed(2)} h`],
                   ].map(([label, value]) => (
                     <div
                       key={label}
@@ -2793,7 +2866,7 @@ export default function CircuitsScolairesPage() {
                 </div>
 
                 <div className="muted" style={{ fontSize: 12 }}>
-                  Fenêtre de validation : ±15 minutes autour du retour moyen AM/PM. Les périodes anormales sont isolées en hors régulier.
+                  Fenêtre de validation : ±15 minutes autour du retour moyen AM/PM. Les périodes anormales sont isolées en hors régulier. Heures à payer = temps AM + PM, arrondi au 0,25 h, puis +0,25 h de VAD par journée.
                 </div>
 
                 <div className="table-wrap">
@@ -2809,17 +2882,23 @@ export default function CircuitsScolairesPage() {
                         <th>KM PM</th>
                         <th>KM régulier</th>
                         <th>Hors régulier</th>
+                        <th>H régulières</th>
+                        <th>VAD</th>
+                        <th>H à payer</th>
                         <th>Statut</th>
                         <th></th>
                       </tr>
                     </thead>
                     <tbody>
                       {samsaraChargement ? (
-                        <tr><td colSpan={11} className="muted">Chargement Samsara…</td></tr>
+                        <tr><td colSpan={14} className="muted">Chargement Samsara…</td></tr>
                       ) : samsaraJoursVisibles.length === 0 ? (
-                        <tr><td colSpan={11} className="muted">Aucune donnée pour cette semaine. Clique sur « Actualiser ce circuit ».</td></tr>
+                        <tr><td colSpan={14} className="muted">Aucune donnée pour cette semaine. Clique sur « Actualiser ce circuit ».</td></tr>
                       ) : (
-                        samsaraJoursVisibles.map((jour) => (
+                        samsaraJoursVisibles.map((jour) => {
+                          const heures = calculHeuresJour(jour);
+
+                          return (
                           <tr key={jour.id} style={jour.exclue ? { opacity: 0.45 } : undefined}>
                             <td><strong>{formatDateSamsara(jour.date)}</strong></td>
                             <td>{formatHeureSamsara(jour.departAm)}</td>
@@ -2830,6 +2909,9 @@ export default function CircuitsScolairesPage() {
                             <td>{jour.kmPm.toFixed(1)}</td>
                             <td><strong>{jour.kmRegulier.toFixed(1)}</strong></td>
                             <td>{jour.kmHorsRegulier.toFixed(1)}</td>
+                            <td>{heures.heuresRegulieres != null ? heures.heuresRegulieres.toFixed(2) : "—"}</td>
+                            <td>{heures.vad != null ? heures.vad.toFixed(2) : "—"}</td>
+                            <td><strong>{heures.heuresAPayer != null ? heures.heuresAPayer.toFixed(2) : "—"}</strong></td>
                             <td>{jour.exclue ? "Exclue" : jour.statut}</td>
                             <td>
                               <button
@@ -2841,7 +2923,8 @@ export default function CircuitsScolairesPage() {
                               </button>
                             </td>
                           </tr>
-                        ))
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
