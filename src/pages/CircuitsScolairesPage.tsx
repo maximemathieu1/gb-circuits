@@ -72,6 +72,28 @@ type CircuitSamsaraConfig = {
   toleranceMinutes: number;
 };
 
+type CircuitSamsaraAttente = {
+  id: string;
+  circuitId: string;
+  date: string;
+  periode: "AM" | "PM";
+  arrivee: string;
+  depart: string;
+  dureeMinutes: number;
+  latitude: number;
+  longitude: number;
+  samsaraAddressId: string | null;
+  nomLieu: string | null;
+  adresse: string | null;
+  groupKey: string | null;
+  recurrent: boolean;
+  occurrenceCount: number;
+  regularDaysCount: number;
+  recurrenceRatio: number;
+  averageDurationMinutes: number | null;
+  maxDurationMinutes: number | null;
+};
+
 type ContactUrgence = {
   id: string;
   organisation: Organisation;
@@ -389,8 +411,11 @@ export default function CircuitsScolairesPage() {
     setOperationEnCours,
   ] = useState(false);
 
-  const [ongletCircuit, setOngletCircuit] = useState<"infos" | "samsara">("infos");
+  const [ongletCircuit, setOngletCircuit] = useState<"infos" | "samsara" | "attentes">("infos");
   const [samsaraJours, setSamsaraJours] = useState<CircuitSamsaraJour[]>([]);
+  const [samsaraAttentes, setSamsaraAttentes] = useState<CircuitSamsaraAttente[]>([]);
+  const [attentesChargement, setAttentesChargement] = useState(false);
+  const [filtreAttentes, setFiltreAttentes] = useState<"recurrent" | "occasionnel" | "tous">("recurrent");
   const [, setSamsaraConfig] =
   useState<CircuitSamsaraConfig | null>(null);
   const [samsaraChargement, setSamsaraChargement] = useState(false);
@@ -725,6 +750,7 @@ export default function CircuitsScolairesPage() {
     setFichiersEnAttente([]);
     setOngletCircuit("infos");
     setSamsaraJours([]);
+    setSamsaraAttentes([]);
     setSamsaraConfig(null);
     setModalCircuitOuvert(true);
   }
@@ -759,6 +785,7 @@ export default function CircuitsScolairesPage() {
     setSamsaraSemaine(mondayIso(0));
     setModalCircuitOuvert(true);
     void chargerAnalyseSamsara(circuit.id, mondayIso(0));
+    void chargerAttentesSamsara(circuit.id);
   }
 
   function fermerModalCircuit() {
@@ -776,6 +803,7 @@ export default function CircuitsScolairesPage() {
     setDragActif(false);
     setOngletCircuit("infos");
     setSamsaraJours([]);
+    setSamsaraAttentes([]);
     setSamsaraConfig(null);
   }
 
@@ -856,6 +884,51 @@ export default function CircuitsScolairesPage() {
     }
   }
 
+
+  async function chargerAttentesSamsara(circuitId: string) {
+    try {
+      setAttentesChargement(true);
+      const { data, error } = await circuitSupabase
+        .from("circuit_samsara_attentes")
+        .select("*")
+        .eq("circuit_id", circuitId)
+        .order("date", { ascending: false })
+        .order("arrivee", { ascending: false })
+        .limit(300);
+
+      if (error) throw error;
+
+      setSamsaraAttentes(
+        (data || []).map((row: any) => ({
+          id: row.id,
+          circuitId: row.circuit_id,
+          date: row.date,
+          periode: row.periode === "PM" ? "PM" : "AM",
+          arrivee: row.arrivee,
+          depart: row.depart,
+          dureeMinutes: Number(row.duree_minutes ?? 0),
+          latitude: Number(row.latitude ?? 0),
+          longitude: Number(row.longitude ?? 0),
+          samsaraAddressId: row.samsara_address_id ?? null,
+          nomLieu: row.nom_lieu ?? null,
+          adresse: row.adresse ?? null,
+          groupKey: row.group_key ?? null,
+          recurrent: !!row.recurrent,
+          occurrenceCount: Number(row.occurrence_count ?? 1),
+          regularDaysCount: Number(row.regular_days_count ?? 0),
+          recurrenceRatio: Number(row.recurrence_ratio ?? 0),
+          averageDurationMinutes: row.average_duration_minutes == null ? null : Number(row.average_duration_minutes),
+          maxDurationMinutes: row.max_duration_minutes == null ? null : Number(row.max_duration_minutes),
+        }))
+      );
+    } catch (error: any) {
+      console.error("Erreur chargement temps d'attente Samsara", error);
+      alert(error?.message || "Impossible de charger les temps d’attente.");
+    } finally {
+      setAttentesChargement(false);
+    }
+  }
+
   async function synchroniserSamsara(circuitId?: string) {
     try {
       setSamsaraSync(true);
@@ -879,6 +952,7 @@ export default function CircuitsScolairesPage() {
 
       if (circuitId) {
         await chargerAnalyseSamsara(circuitId, startDate);
+        await chargerAttentesSamsara(circuitId);
       } else {
         alert(`Synchronisation Samsara terminée : ${data?.circuits_updated ?? 0} circuit(s).`);
       }
@@ -997,6 +1071,31 @@ export default function CircuitsScolairesPage() {
         : 0,
     heuresTotal: heuresPayablesIncluses.reduce((sum, value) => sum + value, 0),
   };
+
+
+  const attentesGroupes = useMemo(() => {
+    const map = new Map<string, CircuitSamsaraAttente>();
+    for (const attente of samsaraAttentes) {
+      const key = attente.groupKey || `${attente.periode}|${attente.samsaraAddressId || `${attente.latitude.toFixed(4)},${attente.longitude.toFixed(4)}`}`;
+      const current = map.get(key);
+      if (!current || attente.occurrenceCount > current.occurrenceCount || attente.date > current.date) {
+        map.set(key, attente);
+      }
+    }
+
+    return [...map.values()]
+      .filter((attente) => {
+        if (filtreAttentes === "recurrent") return attente.recurrent;
+        if (filtreAttentes === "occasionnel") return !attente.recurrent;
+        return true;
+      })
+      .sort((a, b) => {
+        if (a.recurrent !== b.recurrent) return a.recurrent ? -1 : 1;
+        const aAvg = a.averageDurationMinutes ?? a.dureeMinutes;
+        const bAvg = b.averageDurationMinutes ?? b.dureeMinutes;
+        return bAvg - aAvg;
+      });
+  }, [samsaraAttentes, filtreAttentes]);
 
   /*
    * CIRCUIT - ENREGISTRER
@@ -2519,6 +2618,18 @@ export default function CircuitsScolairesPage() {
               >
                 Heures/KM
               </button>
+              <button
+                type="button"
+                className={ongletCircuit === "attentes" ? "btn-primary" : "btn"}
+                onClick={() => {
+                  setOngletCircuit("attentes");
+                  if (circuitActifId) void chargerAttentesSamsara(circuitActifId);
+                }}
+                disabled={!circuitActifId}
+                title={!circuitActifId ? "Enregistre d’abord le circuit" : "Temps d’attente récurrents de 15 minutes et plus"}
+              >
+                Temps d’attente
+              </button>
             </div>
 
             {ongletCircuit === "infos" ? (
@@ -2893,7 +3004,7 @@ export default function CircuitsScolairesPage() {
             </div>
 
               </>
-            ) : (
+            ) : ongletCircuit === "samsara" ? (
               <div style={{ display: "grid", gap: 14 }}>
                 <div
                   style={{
@@ -3083,6 +3194,129 @@ export default function CircuitsScolairesPage() {
                       )}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 14 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    alignItems: "end",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 900, fontSize: 16 }}>Temps d’attente récurrents</div>
+                    <div className="muted" style={{ marginTop: 3, fontSize: 12 }}>
+                      Arrêts de 15 minutes et plus détectés pendant les journées régulières. Récurrent = même lieu et même période sur au moins 3 des 10 dernières journées régulières.
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
+                    <div className="field">
+                      <div className="label">Afficher</div>
+                      <select
+                        className="input"
+                        value={filtreAttentes}
+                        onChange={(e) => setFiltreAttentes(e.target.value as "recurrent" | "occasionnel" | "tous")}
+                      >
+                        <option value="recurrent">Récurrents seulement</option>
+                        <option value="occasionnel">Occasionnels seulement</option>
+                        <option value="tous">Tous</option>
+                      </select>
+                    </div>
+                    <button
+                      className="btn-primary"
+                      type="button"
+                      disabled={!circuitActifId || samsaraSync}
+                      onClick={() => circuitActifId && void synchroniserSamsara(circuitActifId)}
+                    >
+                      {samsaraSync ? "Analyse…" : "Analyser les attentes"}
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                    gap: 10,
+                  }}
+                >
+                  {[
+                    ["Lieux récurrents", String(samsaraAttentes.filter((a) => a.recurrent).reduce((set, a) => set.add(a.groupKey || a.id), new Set<string>()).size)],
+                    ["Seuil d’attente", "15 min"],
+                    ["Récurrence", "≥ 3 / 10 jours"],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#fafafa" }}
+                    >
+                      <div className="muted" style={{ fontSize: 12 }}>{label}</div>
+                      <div style={{ fontWeight: 900, marginTop: 4 }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="table-wrap">
+                  <table className="list">
+                    <thead>
+                      <tr>
+                        <th>Période</th>
+                        <th>Lieu</th>
+                        <th>Adresse</th>
+                        <th>Attente moyenne</th>
+                        <th>Maximum</th>
+                        <th>Fréquence</th>
+                        <th>Statut</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {attentesChargement ? (
+                        <tr><td colSpan={7} className="muted">Chargement des temps d’attente…</td></tr>
+                      ) : attentesGroupes.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="muted">
+                            Aucun temps d’attente correspondant au filtre. Analyse quelques semaines régulières pour bâtir l’historique de récurrence.
+                          </td>
+                        </tr>
+                      ) : (
+                        attentesGroupes.map((attente) => (
+                          <tr key={attente.groupKey || attente.id}>
+                            <td><strong>{attente.periode}</strong></td>
+                            <td>
+                              <strong>{attente.nomLieu || "Lieu non identifié"}</strong>
+                              {!attente.nomLieu && (
+                                <div className="muted" style={{ fontSize: 11 }}>
+                                  {attente.latitude.toFixed(5)}, {attente.longitude.toFixed(5)}
+                                </div>
+                              )}
+                            </td>
+                            <td>{attente.adresse || "—"}</td>
+                            <td><strong>{Math.round(attente.averageDurationMinutes ?? attente.dureeMinutes)} min</strong></td>
+                            <td>{Math.round(attente.maxDurationMinutes ?? attente.dureeMinutes)} min</td>
+                            <td>
+                              {attente.occurrenceCount} / {attente.regularDaysCount || "—"} jours
+                              {attente.regularDaysCount > 0 && (
+                                <div className="muted" style={{ fontSize: 11 }}>
+                                  {Math.round(attente.recurrenceRatio * 100)} %
+                                </div>
+                              )}
+                            </td>
+                            <td>
+                              <strong>{attente.recurrent ? "Récurrent" : "Occasionnel"}</strong>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Détection : autobus dans un rayon d’environ 50 m pendant ≥ 15 min. Regroupement récurrent : même géofence Samsara ou position à ≤ 75 m, séparément pour AM et PM.
                 </div>
               </div>
             )}
