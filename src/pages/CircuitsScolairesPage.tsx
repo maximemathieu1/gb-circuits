@@ -57,6 +57,8 @@ type CircuitSamsaraJour = {
   kmRegulier: number;
   kmHorsRegulier: number;
   statut: string;
+  statutManuel: "regulier" | "hors_regulier" | null;
+  details: Record<string, any>;
   exclue: boolean;
 };
 
@@ -264,6 +266,24 @@ function jourSamsaraCompletPourMoyenne(jour: CircuitSamsaraJour) {
   // AM et PM complétées. Cela évite qu'une journée en cours avec 0 km
   // fasse artificiellement baisser la moyenne.
   return amComplet && pmComplet;
+}
+
+function raisonStatutSamsara(jour: CircuitSamsaraJour) {
+  if (jour.exclue) return "Journée exclue des statistiques.";
+  if (jour.statutManuel === "regulier") return "Confirmé régulier manuellement.";
+  if (jour.statutManuel === "hors_regulier") return "Classé hors régulier manuellement.";
+
+  const raison = String(jour.details?.raison_statut ?? "").trim();
+  if (raison) return raison;
+
+  if (jour.statut === "À vérifier") return "Période AM ou PM incomplète.";
+  if (jour.statut === "Hors régulier") return "Écart supérieur à la tolérance de 15 minutes.";
+  if (jour.statut === "Régulier") return "Dans la plage régulière historique.";
+  return "";
+}
+
+function valeurStatutManuel(jour: CircuitSamsaraJour) {
+  return jour.statutManuel ?? "auto";
 }
 
 function formatDateSamsara(value: string) {
@@ -817,6 +837,14 @@ export default function CircuitsScolairesPage() {
           kmRegulier: Number(row.km_regulier ?? 0),
           kmHorsRegulier: Number(row.km_hors_regulier ?? 0),
           statut: row.statut || "—",
+          statutManuel:
+            row.statut_manuel === "regulier" || row.statut_manuel === "hors_regulier"
+              ? row.statut_manuel
+              : null,
+          details:
+            row.details && typeof row.details === "object"
+              ? row.details
+              : {},
           exclue: !!row.exclue,
         }))
       );
@@ -876,6 +904,61 @@ export default function CircuitsScolairesPage() {
     setSamsaraJours((prev) =>
       prev.map((item) =>
         item.id === jour.id ? { ...item, exclue: !item.exclue } : item
+      )
+    );
+  }
+
+  async function changerStatutSamsara(
+    jour: CircuitSamsaraJour,
+    valeur: "auto" | "regulier" | "hors_regulier"
+  ) {
+    const totalKm = Math.max(0, jour.kmAm) + Math.max(0, jour.kmPm);
+    const details = jour.details || {};
+
+    let statutManuel: "regulier" | "hors_regulier" | null = null;
+    let statut = String(details.auto_statut ?? jour.statut ?? "—");
+    let kmRegulier = Number(details.auto_km_regulier ?? jour.kmRegulier ?? 0);
+    let kmHorsRegulier = Number(details.auto_km_hors_regulier ?? jour.kmHorsRegulier ?? 0);
+
+    if (valeur === "regulier") {
+      statutManuel = "regulier";
+      statut = "Régulier";
+      kmRegulier = totalKm;
+      kmHorsRegulier = 0;
+    } else if (valeur === "hors_regulier") {
+      statutManuel = "hors_regulier";
+      statut = "Hors régulier";
+      kmRegulier = 0;
+      kmHorsRegulier = totalKm;
+    }
+
+    const { error } = await circuitSupabase
+      .from("circuit_samsara_jours")
+      .update({
+        statut_manuel: statutManuel,
+        statut,
+        km_regulier: Number(kmRegulier.toFixed(2)),
+        km_hors_regulier: Number(kmHorsRegulier.toFixed(2)),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", jour.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setSamsaraJours((prev) =>
+      prev.map((item) =>
+        item.id === jour.id
+          ? {
+              ...item,
+              statutManuel,
+              statut,
+              kmRegulier: Number(kmRegulier.toFixed(2)),
+              kmHorsRegulier: Number(kmHorsRegulier.toFixed(2)),
+            }
+          : item
       )
     );
   }
@@ -2883,7 +2966,7 @@ export default function CircuitsScolairesPage() {
                 </div>
 
                 <div className="muted" style={{ fontSize: 12 }}>
-                  Fenêtre de validation : ±15 minutes autour du retour moyen AM/PM. Les périodes anormales sont isolées en hors régulier. Heures à payer = temps AM + PM, arrondi au 0,25 h, puis +0,25 h de VAD par journée.
+                  Référence automatique : médiane des 20 dernières journées régulières complètes, avec tolérance de ±15 minutes sur les retours AM/PM. Un statut manuel Régulier ou Hors régulier a priorité. Heures à payer = temps AM + PM, arrondi au 0,25 h, puis +0,25 h de VAD par journée.
                 </div>
 
                 <div className="table-wrap">
@@ -2929,7 +3012,37 @@ export default function CircuitsScolairesPage() {
                             <td>{heures.heuresRegulieres != null ? heures.heuresRegulieres.toFixed(2) : "—"}</td>
                             <td>{heures.vad != null ? heures.vad.toFixed(2) : "—"}</td>
                             <td><strong>{heures.heuresAPayer != null ? heures.heuresAPayer.toFixed(2) : "—"}</strong></td>
-                            <td>{jour.exclue ? "Exclue" : jour.statut}</td>
+                            <td style={{ minWidth: 190 }}>
+                              {jour.exclue ? (
+                                <div>
+                                  <strong>Exclue</strong>
+                                  <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>
+                                    Journée exclue des statistiques.
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{ display: "grid", gap: 4 }}>
+                                  <select
+                                    className="input"
+                                    style={{ minWidth: 160, padding: "6px 8px" }}
+                                    value={valeurStatutManuel(jour)}
+                                    onChange={(e) =>
+                                      void changerStatutSamsara(
+                                        jour,
+                                        e.target.value as "auto" | "regulier" | "hors_regulier"
+                                      )
+                                    }
+                                  >
+                                    <option value="auto">Automatique · {jour.statut}</option>
+                                    <option value="regulier">Régulier</option>
+                                    <option value="hors_regulier">Hors régulier</option>
+                                  </select>
+                                  <div className="muted" style={{ fontSize: 11, lineHeight: 1.25 }}>
+                                    {raisonStatutSamsara(jour)}
+                                  </div>
+                                </div>
+                              )}
+                            </td>
                             <td>
                               <button
                                 type="button"
