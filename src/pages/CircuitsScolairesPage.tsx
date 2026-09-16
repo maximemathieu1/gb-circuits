@@ -42,6 +42,34 @@ type CircuitScolaire = {
   documents: CircuitDocument[];
 };
 
+type CircuitSamsaraJour = {
+  id: string;
+  circuitId: string;
+  date: string;
+  samsaraVehicleId: string;
+  samsaraVehicleName: string;
+  departAm: string | null;
+  retourAm: string | null;
+  kmAm: number;
+  departPm: string | null;
+  retourPm: string | null;
+  kmPm: number;
+  kmRegulier: number;
+  kmHorsRegulier: number;
+  statut: string;
+  exclue: boolean;
+};
+
+type CircuitSamsaraConfig = {
+  circuitId: string;
+  samsaraVehicleId: string | null;
+  samsaraVehicleName: string | null;
+  depotLat: number | null;
+  depotLng: number | null;
+  depotRadiusM: number;
+  toleranceMinutes: number;
+};
+
 type ContactUrgence = {
   id: string;
   organisation: Organisation;
@@ -157,6 +185,50 @@ function nomOrganisation(contact: ContactUrgence) {
   return contact.organisation;
 }
 
+function formatHeureSamsara(value: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat("fr-CA", {
+    timeZone: "America/Toronto",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+}
+
+function formatDateSamsara(value: string) {
+  const d = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return value;
+  return new Intl.DateTimeFormat("fr-CA", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+  }).format(d);
+}
+
+function mondayIso(offsetWeeks = 0) {
+  const now = new Date();
+  const local = new Date(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Toronto",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now) + "T12:00:00"
+  );
+  const day = local.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  local.setDate(local.getDate() + diff + offsetWeeks * 7);
+  return `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, "0")}-${String(local.getDate()).padStart(2, "0")}`;
+}
+
+function fridayFromMonday(monday: string) {
+  const d = new Date(`${monday}T12:00:00`);
+  d.setDate(d.getDate() + 4);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export default function CircuitsScolairesPage() {
   const inputFichierRef =
     useRef<HTMLInputElement | null>(null);
@@ -227,6 +299,14 @@ export default function CircuitsScolairesPage() {
     operationEnCours,
     setOperationEnCours,
   ] = useState(false);
+
+  const [ongletCircuit, setOngletCircuit] = useState<"infos" | "samsara">("infos");
+  const [samsaraJours, setSamsaraJours] = useState<CircuitSamsaraJour[]>([]);
+  const [samsaraConfig, setSamsaraConfig] = useState<CircuitSamsaraConfig | null>(null);
+  const [samsaraChargement, setSamsaraChargement] = useState(false);
+  const [samsaraSync, setSamsaraSync] = useState(false);
+  const [afficherExclues, setAfficherExclues] = useState(false);
+  const [samsaraSemaine, setSamsaraSemaine] = useState(mondayIso(0));
 
   /*
    * MODAL CONTACT
@@ -553,6 +633,9 @@ export default function CircuitsScolairesPage() {
     });
 
     setFichiersEnAttente([]);
+    setOngletCircuit("infos");
+    setSamsaraJours([]);
+    setSamsaraConfig(null);
     setModalCircuitOuvert(true);
   }
 
@@ -582,7 +665,10 @@ export default function CircuitsScolairesPage() {
     });
 
     setFichiersEnAttente([]);
+    setOngletCircuit("infos");
+    setSamsaraSemaine(mondayIso(0));
     setModalCircuitOuvert(true);
+    void chargerAnalyseSamsara(circuit.id, mondayIso(0));
   }
 
   function fermerModalCircuit() {
@@ -598,7 +684,146 @@ export default function CircuitsScolairesPage() {
 
     setFichiersEnAttente([]);
     setDragActif(false);
+    setOngletCircuit("infos");
+    setSamsaraJours([]);
+    setSamsaraConfig(null);
   }
+
+  async function chargerAnalyseSamsara(
+    circuitId: string,
+    semaine = samsaraSemaine
+  ) {
+    try {
+      setSamsaraChargement(true);
+
+      const fin = fridayFromMonday(semaine);
+
+      const [{ data: configData, error: configError }, { data: joursData, error: joursError }] =
+        await Promise.all([
+          circuitSupabase
+            .from("circuit_samsara_config")
+            .select("*")
+            .eq("circuit_id", circuitId)
+            .maybeSingle(),
+          circuitSupabase
+            .from("circuit_samsara_jours")
+            .select("*")
+            .eq("circuit_id", circuitId)
+            .gte("date", semaine)
+            .lte("date", fin)
+            .order("date", { ascending: true }),
+        ]);
+
+      if (configError) throw configError;
+      if (joursError) throw joursError;
+
+      setSamsaraConfig(
+        configData
+          ? {
+              circuitId: configData.circuit_id,
+              samsaraVehicleId: configData.samsara_vehicle_id ?? null,
+              samsaraVehicleName: configData.samsara_vehicle_name ?? null,
+              depotLat: configData.depot_lat == null ? null : Number(configData.depot_lat),
+              depotLng: configData.depot_lng == null ? null : Number(configData.depot_lng),
+              depotRadiusM: Number(configData.depot_radius_m ?? 150),
+              toleranceMinutes: Number(configData.tolerance_minutes ?? 15),
+            }
+          : null
+      );
+
+      setSamsaraJours(
+        (joursData || []).map((row: any) => ({
+          id: row.id,
+          circuitId: row.circuit_id,
+          date: row.date,
+          samsaraVehicleId: row.samsara_vehicle_id || "",
+          samsaraVehicleName: row.samsara_vehicle_name || "",
+          departAm: row.depart_am,
+          retourAm: row.retour_am,
+          kmAm: Number(row.km_am ?? 0),
+          departPm: row.depart_pm,
+          retourPm: row.retour_pm,
+          kmPm: Number(row.km_pm ?? 0),
+          kmRegulier: Number(row.km_regulier ?? 0),
+          kmHorsRegulier: Number(row.km_hors_regulier ?? 0),
+          statut: row.statut || "—",
+          exclue: !!row.exclue,
+        }))
+      );
+    } catch (error: any) {
+      console.error("Erreur chargement analyse Samsara", error);
+      alert(error?.message || "Impossible de charger l’analyse Samsara.");
+    } finally {
+      setSamsaraChargement(false);
+    }
+  }
+
+  async function synchroniserSamsara(circuitId?: string) {
+    try {
+      setSamsaraSync(true);
+      const startDate = circuitId ? samsaraSemaine : mondayIso(0);
+      const endDate = fridayFromMonday(startDate);
+
+      const { data, error } = await circuitSupabase.functions.invoke(
+        "circuit-samsara-analyse",
+        {
+          body: {
+            circuit_id: circuitId || null,
+            start_date: startDate,
+            end_date: endDate,
+            tolerance_minutes: 15,
+          },
+        }
+      );
+
+      if (error) throw error;
+      if (data?.ok === false) throw new Error(data?.error || "Synchronisation Samsara impossible.");
+
+      if (circuitId) {
+        await chargerAnalyseSamsara(circuitId, startDate);
+      } else {
+        alert(`Synchronisation Samsara terminée : ${data?.circuits_updated ?? 0} circuit(s).`);
+      }
+    } catch (error: any) {
+      console.error("Erreur synchronisation Samsara", error);
+      alert(error?.message || "Synchronisation Samsara impossible.");
+    } finally {
+      setSamsaraSync(false);
+    }
+  }
+
+  async function basculerExclusionSamsara(jour: CircuitSamsaraJour) {
+    const { error } = await circuitSupabase
+      .from("circuit_samsara_jours")
+      .update({ exclue: !jour.exclue, updated_at: new Date().toISOString() })
+      .eq("id", jour.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setSamsaraJours((prev) =>
+      prev.map((item) =>
+        item.id === jour.id ? { ...item, exclue: !item.exclue } : item
+      )
+    );
+  }
+
+  const samsaraJoursVisibles = samsaraJours.filter(
+    (jour) => afficherExclues || !jour.exclue
+  );
+
+  const samsaraJoursInclus = samsaraJours.filter((jour) => !jour.exclue);
+
+  const samsaraResume = {
+    kmMoyen:
+      samsaraJoursInclus.length > 0
+        ? samsaraJoursInclus.reduce((sum, row) => sum + row.kmRegulier, 0) / samsaraJoursInclus.length
+        : 0,
+    kmTotal: samsaraJoursInclus.reduce((sum, row) => sum + row.kmRegulier, 0),
+    horsTotal: samsaraJoursInclus.reduce((sum, row) => sum + row.kmHorsRegulier, 0),
+  };
 
   /*
    * CIRCUIT - ENREGISTRER
@@ -1739,6 +1964,16 @@ export default function CircuitsScolairesPage() {
             <button
               className="btn"
               type="button"
+              onClick={() => void synchroniserSamsara()}
+              disabled={samsaraSync}
+              title="Analyse tous les véhicules pour la semaine courante"
+            >
+              {samsaraSync ? "Samsara…" : "Actualiser Samsara"}
+            </button>
+
+            <button
+              className="btn"
+              type="button"
               onClick={exporterCircuitsPdf}
               disabled={circuitsFiltres.length === 0}
             >
@@ -2079,6 +2314,38 @@ export default function CircuitsScolairesPage() {
               </button>
             </div>
 
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                marginTop: 14,
+                marginBottom: 14,
+                borderBottom: "1px solid #e5e7eb",
+              }}
+            >
+              <button
+                type="button"
+                className={ongletCircuit === "infos" ? "btn-primary" : "btn"}
+                onClick={() => setOngletCircuit("infos")}
+              >
+                Informations
+              </button>
+              <button
+                type="button"
+                className={ongletCircuit === "samsara" ? "btn-primary" : "btn"}
+                onClick={() => {
+                  setOngletCircuit("samsara");
+                  if (circuitActifId) void chargerAnalyseSamsara(circuitActifId, samsaraSemaine);
+                }}
+                disabled={!circuitActifId}
+                title={!circuitActifId ? "Enregistre d’abord le circuit" : "Analyse des heures et kilomètres réels"}
+              >
+                Analyse Samsara
+              </button>
+            </div>
+
+            {ongletCircuit === "infos" ? (
+              <>
             <div className="form-grid">
               <div className="field">
                 <div className="label">
@@ -2447,6 +2714,140 @@ export default function CircuitsScolairesPage() {
                 </div>
               )}
             </div>
+
+              </>
+            ) : (
+              <div style={{ display: "grid", gap: 14 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "end",
+                    flexWrap: "wrap",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap" }}>
+                    <div className="field">
+                      <div className="label">Semaine du</div>
+                      <input
+                        type="date"
+                        className="input"
+                        value={samsaraSemaine}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setSamsaraSemaine(value);
+                          if (circuitActifId && value) void chargerAnalyseSamsara(circuitActifId, value);
+                        }}
+                      />
+                    </div>
+
+                    <label style={{ display: "flex", gap: 7, alignItems: "center", paddingBottom: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={afficherExclues}
+                        onChange={(e) => setAfficherExclues(e.target.checked)}
+                      />
+                      Afficher les journées exclues
+                    </label>
+                  </div>
+
+                  <button
+                    className="btn-primary"
+                    type="button"
+                    disabled={!circuitActifId || samsaraSync}
+                    onClick={() => circuitActifId && void synchroniserSamsara(circuitActifId)}
+                  >
+                    {samsaraSync ? "Analyse…" : "Actualiser ce circuit"}
+                  </button>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))",
+                    gap: 10,
+                  }}
+                >
+                  {[
+                    ["Unité", circuitForm.unite || "—"],
+                    ["Véhicule Samsara", samsaraConfig?.samsaraVehicleName || "Auto-détection"],
+                    ["Tolérance", `${samsaraConfig?.toleranceMinutes ?? 15} min`],
+                    ["KM moyen / jour", `${samsaraResume.kmMoyen.toFixed(1)} km`],
+                    ["KM régulier semaine", `${samsaraResume.kmTotal.toFixed(1)} km`],
+                    ["KM hors régulier", `${samsaraResume.horsTotal.toFixed(1)} km`],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      style={{
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 12,
+                        padding: 12,
+                        background: "#fafafa",
+                      }}
+                    >
+                      <div className="muted" style={{ fontSize: 12 }}>{label}</div>
+                      <div style={{ fontWeight: 900, marginTop: 4 }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Fenêtre de validation : ±15 minutes autour du retour moyen AM/PM. Les périodes anormales sont isolées en hors régulier.
+                </div>
+
+                <div className="table-wrap">
+                  <table className="list">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Départ AM</th>
+                        <th>Retour AM</th>
+                        <th>KM AM</th>
+                        <th>Départ PM</th>
+                        <th>Retour PM</th>
+                        <th>KM PM</th>
+                        <th>KM régulier</th>
+                        <th>Hors régulier</th>
+                        <th>Statut</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {samsaraChargement ? (
+                        <tr><td colSpan={11} className="muted">Chargement Samsara…</td></tr>
+                      ) : samsaraJoursVisibles.length === 0 ? (
+                        <tr><td colSpan={11} className="muted">Aucune donnée pour cette semaine. Clique sur « Actualiser ce circuit ».</td></tr>
+                      ) : (
+                        samsaraJoursVisibles.map((jour) => (
+                          <tr key={jour.id} style={jour.exclue ? { opacity: 0.45 } : undefined}>
+                            <td><strong>{formatDateSamsara(jour.date)}</strong></td>
+                            <td>{formatHeureSamsara(jour.departAm)}</td>
+                            <td>{formatHeureSamsara(jour.retourAm)}</td>
+                            <td>{jour.kmAm.toFixed(1)}</td>
+                            <td>{formatHeureSamsara(jour.departPm)}</td>
+                            <td>{formatHeureSamsara(jour.retourPm)}</td>
+                            <td>{jour.kmPm.toFixed(1)}</td>
+                            <td><strong>{jour.kmRegulier.toFixed(1)}</strong></td>
+                            <td>{jour.kmHorsRegulier.toFixed(1)}</td>
+                            <td>{jour.exclue ? "Exclue" : jour.statut}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={() => void basculerExclusionSamsara(jour)}
+                              >
+                                {jour.exclue ? "Réinclure" : "Exclure"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="modal-actions">
               {circuitActifId && (
