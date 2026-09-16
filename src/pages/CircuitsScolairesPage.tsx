@@ -2842,13 +2842,11 @@ export default function CircuitsScolairesPage() {
                 >
                   {[
                     ["Unité", circuitForm.unite || "—"],
-                    ["Véhicule Samsara", samsaraConfig?.samsaraVehicleName || "Auto-détection"],
-                    ["Tolérance", `${samsaraConfig?.toleranceMinutes ?? 15} min`],
                     ["KM moyen / jour", `${samsaraResume.kmMoyen.toFixed(1)} km`],
-                    ["KM régulier semaine", `${samsaraResume.kmTotal.toFixed(1)} km`],
-                    ["KM hors régulier", `${samsaraResume.horsTotal.toFixed(1)} km`],
-                    ["Heures moy. / jour", `${samsaraResume.heuresMoyennes.toFixed(2)} h`],
-                    ["Heures à payer semaine", `${samsaraResume.heuresTotal.toFixed(2)} h`],
+                    [
+                      "Heures moy. / jour",
+                      `${arrondirQuartHeureDecimal(samsaraResume.heuresMoyennes).toFixed(2)} h`,
+                    ],
                   ].map(([label, value]) => (
                     <div
                       key={label}
