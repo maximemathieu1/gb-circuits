@@ -371,7 +371,8 @@ export default function CircuitsScolairesPage() {
 
   const [ongletCircuit, setOngletCircuit] = useState<"infos" | "samsara">("infos");
   const [samsaraJours, setSamsaraJours] = useState<CircuitSamsaraJour[]>([]);
-  const [samsaraConfig, setSamsaraConfig] = useState<CircuitSamsaraConfig | null>(null);
+  const [, setSamsaraConfig] =
+  useState<CircuitSamsaraConfig | null>(null);
   const [samsaraChargement, setSamsaraChargement] = useState(false);
   const [samsaraSync, setSamsaraSync] = useState(false);
   const [afficherExclues, setAfficherExclues] = useState(false);
