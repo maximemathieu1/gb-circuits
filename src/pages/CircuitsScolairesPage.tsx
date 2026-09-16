@@ -415,7 +415,7 @@ export default function CircuitsScolairesPage() {
   const [samsaraJours, setSamsaraJours] = useState<CircuitSamsaraJour[]>([]);
   const [samsaraAttentes, setSamsaraAttentes] = useState<CircuitSamsaraAttente[]>([]);
   const [attentesChargement, setAttentesChargement] = useState(false);
-  const [filtreAttentes, setFiltreAttentes] = useState<"recurrent" | "occasionnel" | "tous">("recurrent");
+  const [filtreAttentes, setFiltreAttentes] = useState<"recurrent" | "occasionnel" | "tous">("tous");
   const [, setSamsaraConfig] =
   useState<CircuitSamsaraConfig | null>(null);
   const [samsaraChargement, setSamsaraChargement] = useState(false);
@@ -1074,26 +1074,16 @@ export default function CircuitsScolairesPage() {
 
 
   const attentesGroupes = useMemo(() => {
-    const map = new Map<string, CircuitSamsaraAttente>();
-    for (const attente of samsaraAttentes) {
-      const key = attente.groupKey || `${attente.periode}|${attente.samsaraAddressId || `${attente.latitude.toFixed(4)},${attente.longitude.toFixed(4)}`}`;
-      const current = map.get(key);
-      if (!current || attente.occurrenceCount > current.occurrenceCount || attente.date > current.date) {
-        map.set(key, attente);
-      }
-    }
-
-    return [...map.values()]
+    return [...samsaraAttentes]
       .filter((attente) => {
         if (filtreAttentes === "recurrent") return attente.recurrent;
         if (filtreAttentes === "occasionnel") return !attente.recurrent;
         return true;
       })
       .sort((a, b) => {
-        if (a.recurrent !== b.recurrent) return a.recurrent ? -1 : 1;
-        const aAvg = a.averageDurationMinutes ?? a.dureeMinutes;
-        const bAvg = b.averageDurationMinutes ?? b.dureeMinutes;
-        return bAvg - aAvg;
+        const dateCmp = b.date.localeCompare(a.date);
+        if (dateCmp !== 0) return dateCmp;
+        return Date.parse(b.arrivee) - Date.parse(a.arrivee);
       });
   }, [samsaraAttentes, filtreAttentes]);
 
@@ -2429,7 +2419,7 @@ export default function CircuitsScolairesPage() {
                 0 && (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="muted"
                   >
                     Aucun circuit.
@@ -2626,7 +2616,7 @@ export default function CircuitsScolairesPage() {
                   if (circuitActifId) void chargerAttentesSamsara(circuitActifId);
                 }}
                 disabled={!circuitActifId}
-                title={!circuitActifId ? "Enregistre d’abord le circuit" : "Temps d’attente récurrents de 15 minutes et plus"}
+                title={!circuitActifId ? "Enregistre d’abord le circuit" : "Temps d’attente quotidiens de 15 minutes et plus"}
               >
                 Temps d’attente
               </button>
@@ -3208,9 +3198,9 @@ export default function CircuitsScolairesPage() {
                   }}
                 >
                   <div>
-                    <div style={{ fontWeight: 900, fontSize: 16 }}>Temps d’attente récurrents</div>
+                    <div style={{ fontWeight: 900, fontSize: 16 }}>Temps d’attente quotidiens</div>
                     <div className="muted" style={{ marginTop: 3, fontSize: 12 }}>
-                      Arrêts de 15 minutes et plus détectés pendant les journées régulières. Récurrent = même lieu et même période sur au moins 3 des 10 dernières journées régulières.
+                      Tous les arrêts de 15 minutes et plus détectés pendant les journées classées régulières. La récurrence est seulement un filtre secondaire.
                     </div>
                   </div>
 
@@ -3246,9 +3236,9 @@ export default function CircuitsScolairesPage() {
                   }}
                 >
                   {[
-                    ["Lieux récurrents", String(samsaraAttentes.filter((a) => a.recurrent).reduce((set, a) => set.add(a.groupKey || a.id), new Set<string>()).size)],
+                    ["Attentes détectées", String(samsaraAttentes.length)],
                     ["Seuil d’attente", "15 min"],
-                    ["Récurrence", "≥ 3 / 10 jours"],
+                    ["Journées ciblées", "Régulières"],
                   ].map(([label, value]) => (
                     <div
                       key={label}
@@ -3264,28 +3254,33 @@ export default function CircuitsScolairesPage() {
                   <table className="list">
                     <thead>
                       <tr>
+                        <th>Date</th>
                         <th>Période</th>
+                        <th>Arrivée</th>
+                        <th>Départ</th>
+                        <th>Durée</th>
                         <th>Lieu</th>
                         <th>Adresse</th>
-                        <th>Attente moyenne</th>
-                        <th>Maximum</th>
-                        <th>Fréquence</th>
                         <th>Statut</th>
                       </tr>
                     </thead>
                     <tbody>
                       {attentesChargement ? (
-                        <tr><td colSpan={7} className="muted">Chargement des temps d’attente…</td></tr>
+                        <tr><td colSpan={8} className="muted">Chargement des temps d’attente…</td></tr>
                       ) : attentesGroupes.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="muted">
-                            Aucun temps d’attente correspondant au filtre. Analyse quelques semaines régulières pour bâtir l’historique de récurrence.
+                            Aucun temps d’attente quotidien détecté sur les journées régulières analysées.
                           </td>
                         </tr>
                       ) : (
                         attentesGroupes.map((attente) => (
-                          <tr key={attente.groupKey || attente.id}>
+                          <tr key={attente.id}>
+                            <td><strong>{formatDateSamsara(attente.date)}</strong></td>
                             <td><strong>{attente.periode}</strong></td>
+                            <td>{formatHeureSamsara(attente.arrivee)}</td>
+                            <td>{formatHeureSamsara(attente.depart)}</td>
+                            <td><strong>{Math.round(attente.dureeMinutes)} min</strong></td>
                             <td>
                               <strong>{attente.nomLieu || "Lieu non identifié"}</strong>
                               {!attente.nomLieu && (
@@ -3295,18 +3290,12 @@ export default function CircuitsScolairesPage() {
                               )}
                             </td>
                             <td>{attente.adresse || "—"}</td>
-                            <td><strong>{Math.round(attente.averageDurationMinutes ?? attente.dureeMinutes)} min</strong></td>
-                            <td>{Math.round(attente.maxDurationMinutes ?? attente.dureeMinutes)} min</td>
                             <td>
-                              {attente.occurrenceCount} / {attente.regularDaysCount || "—"} jours
-                              {attente.regularDaysCount > 0 && (
-                                <div className="muted" style={{ fontSize: 11 }}>
-                                  {Math.round(attente.recurrenceRatio * 100)} %
-                                </div>
+                              {attente.recurrent ? (
+                                <strong>Récurrent</strong>
+                              ) : (
+                                <span className="muted">À valider</span>
                               )}
-                            </td>
-                            <td>
-                              <strong>{attente.recurrent ? "Récurrent" : "Occasionnel"}</strong>
                             </td>
                           </tr>
                         ))
@@ -3316,7 +3305,7 @@ export default function CircuitsScolairesPage() {
                 </div>
 
                 <div className="muted" style={{ fontSize: 12 }}>
-                  Détection : autobus dans un rayon d’environ 50 m pendant ≥ 15 min. Regroupement récurrent : même géofence Samsara ou position à ≤ 75 m, séparément pour AM et PM.
+                  Détection quotidienne : seulement les journées régulières, arrêt ≥ 15 min. Le statut récurrent est calculé ensuite et ne bloque jamais l’affichage dans « Tous ».
                 </div>
               </div>
             )}
