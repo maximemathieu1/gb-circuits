@@ -378,6 +378,13 @@ export default function CircuitsScolairesPage() {
   const gpsMapRef = useRef<mapboxgl.Map | null>(null);
   const gpsMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const gpsDestinationMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const vehiculeGpsActifRef = useRef<SamsaraLiveVehicle | null>(null);
+  const destinationGpsRef = useRef<{
+    longitude: number;
+    latitude: number;
+  } | null>(null);
+  const etaAbortRef = useRef<AbortController | null>(null);
+  const etaRequestIdRef = useRef(0);
 
   /*
    * DONNÉES SUPABASE
@@ -423,6 +430,14 @@ export default function CircuitsScolairesPage() {
   } | null>(null);
   const [etaChargement, setEtaChargement] = useState(false);
   const [etaErreur, setEtaErreur] = useState<string | null>(null);
+
+  useEffect(() => {
+    vehiculeGpsActifRef.current = vehiculeGpsActif;
+  }, [vehiculeGpsActif]);
+
+  useEffect(() => {
+    destinationGpsRef.current = destinationGps;
+  }, [destinationGps]);
 
   /*
    * FILTRES / TRI
@@ -809,7 +824,12 @@ export default function CircuitsScolairesPage() {
   }
 
   function retirerTrajetGps() {
+    etaAbortRef.current?.abort();
+    etaAbortRef.current = null;
+    etaRequestIdRef.current += 1;
+
     setDestinationGps(null);
+    destinationGpsRef.current = null;
     setEtaGps(null);
     setEtaErreur(null);
 
@@ -850,6 +870,12 @@ export default function CircuitsScolairesPage() {
     }
 
     try {
+      const requestId = ++etaRequestIdRef.current;
+
+      etaAbortRef.current?.abort();
+      const controller = new AbortController();
+      etaAbortRef.current = controller;
+
       setEtaChargement(true);
       setEtaErreur(null);
 
@@ -863,13 +889,20 @@ export default function CircuitsScolairesPage() {
         `?alternatives=false&geometries=geojson&overview=full&steps=false` +
         `&access_token=${encodeURIComponent(token)}`;
 
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        signal: controller.signal,
+      });
 
       if (!response.ok) {
         throw new Error(`Mapbox Directions ${response.status}`);
       }
 
       const data = await response.json();
+
+      if (requestId !== etaRequestIdRef.current) {
+        return;
+      }
+
       const route = data?.routes?.[0];
 
       if (!route) {
@@ -948,13 +981,19 @@ export default function CircuitsScolairesPage() {
         }
       }
     } catch (error: any) {
+      if (error?.name === "AbortError") {
+        return;
+      }
+
       console.error("Erreur calcul ETA Mapbox", error);
       setEtaErreur(
         error?.message ||
           "Impossible de calculer l’itinéraire."
       );
     } finally {
-      setEtaChargement(false);
+      if (etaAbortRef.current?.signal.aborted !== true) {
+        setEtaChargement(false);
+      }
     }
   }
 
@@ -967,7 +1006,7 @@ export default function CircuitsScolairesPage() {
     setDestinationGps(destination);
     setEtaGps(null);
     setEtaErreur(null);
-    setSuiviGps(false);
+    setSuiviGps(true);
 
     gpsDestinationMarkerRef.current?.remove();
 
@@ -1013,6 +1052,10 @@ export default function CircuitsScolairesPage() {
   }
 
   function fermerCarteGps() {
+    etaAbortRef.current?.abort();
+    etaAbortRef.current = null;
+    etaRequestIdRef.current += 1;
+
     setModalGpsOuvert(false);
     setCircuitGpsActif(null);
     setVehiculeGpsActif(null);
@@ -1171,41 +1214,36 @@ export default function CircuitsScolairesPage() {
   ]);
 
   useEffect(() => {
-    if (
-      !modalGpsOuvert ||
-      !destinationGps ||
-      vehiculeGpsActif?.latitude == null ||
-      vehiculeGpsActif?.longitude == null
-    ) {
-      return;
-    }
-
-    void calculerEtaGps(
-      destinationGps,
-      vehiculeGpsActif
-    );
-  }, [
-    vehiculeGpsActif?.latitude,
-    vehiculeGpsActif?.longitude,
-  ]);
-
-  useEffect(() => {
     if (!modalGpsOuvert || !destinationGps) return;
 
-    const timer = window.setInterval(() => {
-      void calculerEtaGps(
-        destinationGps,
-        vehiculeGpsActif
-      );
-    }, 30000);
+    const recalculerDepuisPositionActuelle = () => {
+      const destination = destinationGpsRef.current;
+      const live = vehiculeGpsActifRef.current;
+
+      if (
+        !destination ||
+        live?.latitude == null ||
+        live?.longitude == null
+      ) {
+        return;
+      }
+
+      void calculerEtaGps(destination, live);
+    };
+
+    // Recalcule avec LA position la plus récente au moment du calcul.
+    recalculerDepuisPositionActuelle();
+
+    const timer = window.setInterval(
+      recalculerDepuisPositionActuelle,
+      15000
+    );
 
     return () => window.clearInterval(timer);
   }, [
     modalGpsOuvert,
     destinationGps?.longitude,
     destinationGps?.latitude,
-    vehiculeGpsActif?.latitude,
-    vehiculeGpsActif?.longitude,
   ]);
 
   /*
@@ -3511,9 +3549,8 @@ export default function CircuitsScolairesPage() {
                 <div className="muted" style={{ fontSize: 12 }}>
                   Position GPS mise à jour toutes les 5 secondes. Le suivi
                   reste actif même si tu zoomes ou déplaces manuellement la
-                  carte. À la prochaine mise à jour GPS, la carte se recentre
-                  automatiquement sur l’autobus. L’ETA est recalculée
-                  automatiquement pendant le déplacement.
+                  carte. L’itinéraire est recalculé toutes les 15 secondes à
+                  partir de la position GPS la plus récente de l’autobus.
                 </div>
 
                 {!suiviGps && !destinationGps && (
