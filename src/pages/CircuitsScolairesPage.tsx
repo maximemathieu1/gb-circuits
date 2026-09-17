@@ -377,6 +377,7 @@ export default function CircuitsScolairesPage() {
   const gpsMapContainerRef = useRef<HTMLDivElement | null>(null);
   const gpsMapRef = useRef<mapboxgl.Map | null>(null);
   const gpsMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const gpsDestinationMarkerRef = useRef<mapboxgl.Marker | null>(null);
 
   /*
    * DONNÉES SUPABASE
@@ -411,6 +412,17 @@ export default function CircuitsScolairesPage() {
   const [gpsChargement, setGpsChargement] = useState(false);
   const [gpsErreur, setGpsErreur] = useState<string | null>(null);
   const [suiviGps, setSuiviGps] = useState(true);
+  const [destinationGps, setDestinationGps] = useState<{
+    longitude: number;
+    latitude: number;
+  } | null>(null);
+  const [etaGps, setEtaGps] = useState<{
+    durationSeconds: number;
+    distanceMeters: number;
+    arrivalAt: string;
+  } | null>(null);
+  const [etaChargement, setEtaChargement] = useState(false);
+  const [etaErreur, setEtaErreur] = useState<string | null>(null);
 
   /*
    * FILTRES / TRI
@@ -776,6 +788,217 @@ export default function CircuitsScolairesPage() {
     }
   }
 
+  function formaterDureeTrajet(seconds: number) {
+    const totalMinutes = Math.max(1, Math.round(seconds / 60));
+
+    if (totalMinutes < 60) {
+      return `${totalMinutes} min`;
+    }
+
+    const heures = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return minutes > 0 ? `${heures} h ${minutes} min` : `${heures} h`;
+  }
+
+  function formaterDistanceTrajet(meters: number) {
+    if (meters < 1000) {
+      return `${Math.round(meters)} m`;
+    }
+
+    return `${(meters / 1000).toFixed(1)} km`;
+  }
+
+  function retirerTrajetGps() {
+    setDestinationGps(null);
+    setEtaGps(null);
+    setEtaErreur(null);
+
+    gpsDestinationMarkerRef.current?.remove();
+    gpsDestinationMarkerRef.current = null;
+
+    const map = gpsMapRef.current;
+    if (!map) return;
+
+    if (map.getLayer("gps-route-line")) {
+      map.removeLayer("gps-route-line");
+    }
+
+    if (map.getSource("gps-route")) {
+      map.removeSource("gps-route");
+    }
+  }
+
+  async function calculerEtaGps(
+    destination = destinationGps,
+    live = vehiculeGpsActif
+  ) {
+    if (
+      !destination ||
+      live?.latitude == null ||
+      live?.longitude == null
+    ) {
+      return;
+    }
+
+    const token =
+      import.meta.env.VITE_MAPBOX_TOKEN ||
+      import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
+    if (!token) {
+      setEtaErreur("Jeton Mapbox introuvable.");
+      return;
+    }
+
+    try {
+      setEtaChargement(true);
+      setEtaErreur(null);
+
+      const coordinates =
+        `${live.longitude},${live.latitude};` +
+        `${destination.longitude},${destination.latitude}`;
+
+      const url =
+        `https://api.mapbox.com/directions/v5/mapbox/driving/` +
+        `${coordinates}` +
+        `?alternatives=false&geometries=geojson&overview=full&steps=false` +
+        `&access_token=${encodeURIComponent(token)}`;
+
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error(`Mapbox Directions ${response.status}`);
+      }
+
+      const data = await response.json();
+      const route = data?.routes?.[0];
+
+      if (!route) {
+        throw new Error("Aucun itinéraire routier trouvé.");
+      }
+
+      const durationSeconds = Number(route.duration ?? 0);
+      const distanceMeters = Number(route.distance ?? 0);
+
+      setEtaGps({
+        durationSeconds,
+        distanceMeters,
+        arrivalAt: new Date(
+          Date.now() + durationSeconds * 1000
+        ).toISOString(),
+      });
+
+      const map = gpsMapRef.current;
+
+      if (
+        map &&
+        route.geometry &&
+        route.geometry.type === "LineString"
+      ) {
+        const geojson = {
+          type: "Feature",
+          properties: {},
+          geometry: route.geometry,
+        } as any;
+
+        const existingSource = map.getSource(
+          "gps-route"
+        ) as mapboxgl.GeoJSONSource | undefined;
+
+        if (existingSource) {
+          existingSource.setData(geojson);
+        } else {
+          map.addSource("gps-route", {
+            type: "geojson",
+            data: geojson,
+          });
+
+          map.addLayer({
+            id: "gps-route-line",
+            type: "line",
+            source: "gps-route",
+            layout: {
+              "line-join": "round",
+              "line-cap": "round",
+            },
+            paint: {
+              "line-color": "#2563eb",
+              "line-width": 5,
+              "line-opacity": 0.85,
+            },
+          });
+        }
+
+        const coordinatesRoute =
+          route.geometry.coordinates as [number, number][];
+
+        if (coordinatesRoute.length > 1) {
+          const bounds = coordinatesRoute.reduce(
+            (b, coord) => b.extend(coord),
+            new mapboxgl.LngLatBounds(
+              coordinatesRoute[0],
+              coordinatesRoute[0]
+            )
+          );
+
+          map.fitBounds(bounds, {
+            padding: 70,
+            maxZoom: 15,
+            duration: 500,
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error("Erreur calcul ETA Mapbox", error);
+      setEtaErreur(
+        error?.message ||
+          "Impossible de calculer l’itinéraire."
+      );
+    } finally {
+      setEtaChargement(false);
+    }
+  }
+
+  function definirDestinationGps(
+    longitude: number,
+    latitude: number
+  ) {
+    const destination = { longitude, latitude };
+
+    setDestinationGps(destination);
+    setEtaGps(null);
+    setEtaErreur(null);
+    setSuiviGps(false);
+
+    gpsDestinationMarkerRef.current?.remove();
+
+    const markerEl = document.createElement("div");
+    markerEl.style.width = "34px";
+    markerEl.style.height = "34px";
+    markerEl.style.borderRadius = "50% 50% 50% 0";
+    markerEl.style.background = "#dc2626";
+    markerEl.style.border = "3px solid #ffffff";
+    markerEl.style.boxShadow = "0 3px 12px rgba(0,0,0,.25)";
+    markerEl.style.transform = "rotate(-45deg)";
+    markerEl.style.display = "grid";
+    markerEl.style.placeItems = "center";
+
+    const centerDot = document.createElement("div");
+    centerDot.style.width = "9px";
+    centerDot.style.height = "9px";
+    centerDot.style.borderRadius = "50%";
+    centerDot.style.background = "#ffffff";
+    markerEl.appendChild(centerDot);
+
+    gpsDestinationMarkerRef.current = new mapboxgl.Marker({
+      element: markerEl,
+      anchor: "bottom",
+    })
+      .setLngLat([longitude, latitude])
+      .addTo(gpsMapRef.current!);
+
+    void calculerEtaGps(destination, vehiculeGpsActif);
+  }
+
   function ouvrirCarteGps(circuit: CircuitScolaire) {
     const live = samsaraLiveParCircuit[circuit.id];
 
@@ -795,9 +1018,15 @@ export default function CircuitsScolairesPage() {
     setVehiculeGpsActif(null);
     setGpsErreur(null);
     setSuiviGps(true);
+    setDestinationGps(null);
+    setEtaGps(null);
+    setEtaErreur(null);
 
     gpsMarkerRef.current?.remove();
     gpsMarkerRef.current = null;
+
+    gpsDestinationMarkerRef.current?.remove();
+    gpsDestinationMarkerRef.current = null;
 
     gpsMapRef.current?.remove();
     gpsMapRef.current = null;
@@ -872,11 +1101,21 @@ export default function CircuitsScolairesPage() {
       if (event?.originalEvent) setSuiviGps(false);
     });
 
+    map.on("contextmenu", (event) => {
+      event.preventDefault();
+      definirDestinationGps(
+        event.lngLat.lng,
+        event.lngLat.lat
+      );
+    });
+
     gpsMapRef.current = map;
 
     return () => {
       gpsMarkerRef.current?.remove();
       gpsMarkerRef.current = null;
+      gpsDestinationMarkerRef.current?.remove();
+      gpsDestinationMarkerRef.current = null;
       map.remove();
       if (gpsMapRef.current === map) gpsMapRef.current = null;
     };
@@ -934,6 +1173,44 @@ export default function CircuitsScolairesPage() {
     vehiculeGpsActif?.longitude,
     vehiculeGpsActif?.headingDegrees,
     suiviGps,
+  ]);
+
+  useEffect(() => {
+    if (
+      !modalGpsOuvert ||
+      !destinationGps ||
+      vehiculeGpsActif?.latitude == null ||
+      vehiculeGpsActif?.longitude == null
+    ) {
+      return;
+    }
+
+    void calculerEtaGps(
+      destinationGps,
+      vehiculeGpsActif
+    );
+  }, [
+    vehiculeGpsActif?.latitude,
+    vehiculeGpsActif?.longitude,
+  ]);
+
+  useEffect(() => {
+    if (!modalGpsOuvert || !destinationGps) return;
+
+    const timer = window.setInterval(() => {
+      void calculerEtaGps(
+        destinationGps,
+        vehiculeGpsActif
+      );
+    }, 30000);
+
+    return () => window.clearInterval(timer);
+  }, [
+    modalGpsOuvert,
+    destinationGps?.longitude,
+    destinationGps?.latitude,
+    vehiculeGpsActif?.latitude,
+    vehiculeGpsActif?.longitude,
   ]);
 
   /*
@@ -2762,14 +3039,14 @@ export default function CircuitsScolairesPage() {
                                 whiteSpace: "nowrap",
                               }}
                             >
-                              ● Samsara
+                              ● GPS
                             </button>
                           );
                         }
 
                         return (
                           <span
-                            title="Aucun véhicule Samsara trouvé pour cette unité"
+                            title="Aucun GPS trouvé pour cette unité"
                             style={{
                               display: "inline-flex",
                               alignItems: "center",
@@ -2783,7 +3060,7 @@ export default function CircuitsScolairesPage() {
                               whiteSpace: "nowrap",
                             }}
                           >
-                            ● Aucun Samsara
+                            ● Aucun GPS
                           </span>
                         );
                       })()}
@@ -2952,7 +3229,7 @@ export default function CircuitsScolairesPage() {
                 <div className="muted">
                   {circuitGpsActif.nomConducteur || "Conducteur non assigné"}
                   {vehiculeGpsActif?.vehicleName
-                    ? ` · Samsara ${vehiculeGpsActif.vehicleName}`
+                    ? ` · GPS ${vehiculeGpsActif.vehicleName}`
                     : ""}
                 </div>
               </div>
@@ -3019,8 +3296,8 @@ export default function CircuitsScolairesPage() {
                     {vehiculeGpsActif?.found ? "●" : "●"}
                   </span>
                   {vehiculeGpsActif?.found
-                    ? "Samsara connecté"
-                    : "Aucun Samsara"}
+                    ? "GPS actif"
+                    : "Aucun GPS"}
                 </div>
 
                 {gpsChargement && (
@@ -3149,12 +3426,94 @@ export default function CircuitsScolairesPage() {
                   </div>
                 )}
 
-                <div className="muted" style={{ fontSize: 12 }}>
-                  Mise à jour automatique toutes les 5 secondes.
-                  Le suivi automatique s’arrête si tu déplaces la carte.
+                <div
+                  style={{
+                    border: "1px solid #dbeafe",
+                    background: "#eff6ff",
+                    borderRadius: 12,
+                    padding: 12,
+                  }}
+                >
+                  <div style={{ fontWeight: 900 }}>
+                    Estimation d’arrivée
+                  </div>
+
+                  {!destinationGps ? (
+                    <div
+                      className="muted"
+                      style={{ marginTop: 5, fontSize: 12 }}
+                    >
+                      Clique avec le bouton droit sur la carte pour choisir
+                      une destination et calculer le temps de trajet.
+                    </div>
+                  ) : etaChargement ? (
+                    <div
+                      className="muted"
+                      style={{ marginTop: 5 }}
+                    >
+                      Calcul de l’itinéraire…
+                    </div>
+                  ) : etaGps ? (
+                    <div style={{ marginTop: 7 }}>
+                      <div
+                        style={{
+                          fontWeight: 900,
+                          fontSize: 22,
+                        }}
+                      >
+                        {formaterDureeTrajet(
+                          etaGps.durationSeconds
+                        )}{" "}
+                        ·{" "}
+                        {formaterDistanceTrajet(
+                          etaGps.distanceMeters
+                        )}
+                      </div>
+
+                      <div
+                        className="muted"
+                        style={{ marginTop: 4 }}
+                      >
+                        Arrivée estimée :{" "}
+                        <strong>
+                          {formatHeureLive(
+                            etaGps.arrivalAt
+                          )}
+                        </strong>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {etaErreur && (
+                    <div
+                      style={{
+                        marginTop: 7,
+                        color: "#991b1b",
+                        fontSize: 12,
+                      }}
+                    >
+                      {etaErreur}
+                    </div>
+                  )}
+
+                  {destinationGps && (
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={retirerTrajetGps}
+                      style={{ marginTop: 10 }}
+                    >
+                      Effacer la destination
+                    </button>
+                  )}
                 </div>
 
-                {!suiviGps && (
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Position GPS mise à jour toutes les 5 secondes. L’ETA est
+                  recalculée automatiquement pendant le déplacement.
+                </div>
+
+                {!suiviGps && !destinationGps && (
                   <button
                     className="btn-primary"
                     type="button"
@@ -3166,13 +3525,41 @@ export default function CircuitsScolairesPage() {
               </div>
 
               <div
-                ref={gpsMapContainerRef}
                 style={{
+                  position: "relative",
                   minHeight: 620,
-                  width: "100%",
-                  background: "#f3f4f6",
+                  minWidth: 0,
                 }}
-              />
+              >
+                <div
+                  ref={gpsMapContainerRef}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    background: "#f3f4f6",
+                  }}
+                />
+
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 12,
+                    top: 12,
+                    zIndex: 2,
+                    background: "rgba(255,255,255,.94)",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 10,
+                    padding: "8px 10px",
+                    fontSize: 12,
+                    fontWeight: 800,
+                    boxShadow: "0 2px 8px rgba(0,0,0,.08)",
+                    pointerEvents: "none",
+                  }}
+                >
+                  Clic droit = calculer l’arrivée à cet endroit
+                </div>
+              </div>
             </div>
           </div>
         </div>
