@@ -3365,28 +3365,7 @@ export default function CircuitsScolairesPage() {
                     </div>
                   </div>
 
-                  {vehiculeGpsActif?.fuelPercent != null && (
-                    <div
-                      style={{
-                        border: "1px solid #e5e7eb",
-                        borderRadius: 12,
-                        padding: 12,
-                      }}
-                    >
-                      <div className="muted" style={{ fontSize: 12 }}>
-                        Carburant
-                      </div>
-                      <div
-                        style={{
-                          marginTop: 4,
-                          fontWeight: 900,
-                          fontSize: 22,
-                        }}
-                      >
-                        {Math.round(
-                          vehiculeGpsActif.fuelPercent
-                        )}
-                        %
+                                          %
                       </div>
                     </div>
                   )}
@@ -3399,7 +3378,16 @@ export default function CircuitsScolairesPage() {
                         padding: 12,
                       }}
                     >
-                      <div className="muted" style={{ fontSize: 12 }}>
+                      <div
+                        className="muted"
+                        style={{
+                          fontSize: 12,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <span aria-hidden="true">🔋</span>
                         État de charge
                       </div>
                       <div
