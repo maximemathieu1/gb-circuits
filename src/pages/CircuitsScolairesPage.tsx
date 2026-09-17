@@ -3403,11 +3403,6 @@ export default function CircuitsScolairesPage() {
                     </div>
                   </div>
 
-                                          %
-                      </div>
-                    </div>
-                  )}
-
                   {vehiculeGpsActif?.batterySocPercent != null && (
                     <div
                       style={{
