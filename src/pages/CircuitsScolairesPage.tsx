@@ -1096,11 +1096,6 @@ export default function CircuitsScolairesPage() {
 
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
 
-    map.on("dragstart", () => setSuiviGps(false));
-    map.on("zoomstart", (event: any) => {
-      if (event?.originalEvent) setSuiviGps(false);
-    });
-
     map.on("contextmenu", (event) => {
       event.preventDefault();
       definirDestinationGps(
@@ -3205,16 +3200,29 @@ export default function CircuitsScolairesPage() {
         <div
           className="modal-backdrop"
           onMouseDown={fermerCarteGps}
-          style={{ zIndex: 2000 }}
+          style={{
+            zIndex: 2000,
+            position: "fixed",
+            inset: 0,
+            padding: 14,
+            display: "flex",
+            alignItems: "stretch",
+            justifyContent: "center",
+            overflow: "hidden",
+          }}
         >
           <div
             className="modal-card"
             onMouseDown={(e) => e.stopPropagation()}
             style={{
-              width: "min(1500px, calc(100vw - 28px))",
+              width: "min(1500px, 100%)",
               maxWidth: "none",
+              height: "100%",
+              maxHeight: "100%",
               padding: 0,
               overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
             }}
           >
             <div
@@ -3268,7 +3276,9 @@ export default function CircuitsScolairesPage() {
               style={{
                 display: "grid",
                 gridTemplateColumns: "minmax(250px, 320px) minmax(0, 1fr)",
-                minHeight: 620,
+                flex: 1,
+                minHeight: 0,
+                overflow: "hidden",
               }}
             >
               <div
@@ -3279,6 +3289,8 @@ export default function CircuitsScolairesPage() {
                   display: "grid",
                   alignContent: "start",
                   gap: 12,
+                  overflowY: "auto",
+                  minHeight: 0,
                 }}
               >
                 <div
@@ -3509,8 +3521,11 @@ export default function CircuitsScolairesPage() {
                 </div>
 
                 <div className="muted" style={{ fontSize: 12 }}>
-                  Position GPS mise à jour toutes les 5 secondes. L’ETA est
-                  recalculée automatiquement pendant le déplacement.
+                  Position GPS mise à jour toutes les 5 secondes. Le suivi
+                  reste actif même si tu zoomes ou déplaces manuellement la
+                  carte. À la prochaine mise à jour GPS, la carte se recentre
+                  automatiquement sur l’autobus. L’ETA est recalculée
+                  automatiquement pendant le déplacement.
                 </div>
 
                 {!suiviGps && !destinationGps && (
@@ -3527,8 +3542,9 @@ export default function CircuitsScolairesPage() {
               <div
                 style={{
                   position: "relative",
-                  minHeight: 620,
+                  minHeight: 0,
                   minWidth: 0,
+                  height: "100%",
                 }}
               >
                 <div
