@@ -8,6 +8,8 @@ import {
 import { circuitSupabase } from "../lib/circuitSupabase";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import mapboxgl from "mapbox-gl";
+import "mapbox-gl/dist/mapbox-gl.css";
 
 type Compagnie =
   | "Autobus Breton"
@@ -70,6 +72,21 @@ type CircuitSamsaraConfig = {
   depotLng: number | null;
   depotRadiusM: number;
   toleranceMinutes: number;
+};
+
+type SamsaraLiveVehicle = {
+  found: boolean;
+  unit: string;
+  vehicleId: string | null;
+  vehicleName: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  headingDegrees: number | null;
+  speedKph: number | null;
+  fuelPercent: number | null;
+  batterySocPercent: number | null;
+  address: string | null;
+  updatedAt: string | null;
 };
 
 type CircuitSamsaraAttente = {
@@ -340,9 +357,26 @@ function fridayFromMonday(monday: string) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function formatHeureLive(value: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat("fr-CA", {
+    timeZone: "America/Toronto",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(d);
+}
+
 export default function CircuitsScolairesPage() {
   const inputFichierRef =
     useRef<HTMLInputElement | null>(null);
+
+  const gpsMapContainerRef = useRef<HTMLDivElement | null>(null);
+  const gpsMapRef = useRef<mapboxgl.Map | null>(null);
+  const gpsMarkerRef = useRef<mapboxgl.Marker | null>(null);
 
   /*
    * DONNÉES SUPABASE
@@ -361,6 +395,22 @@ export default function CircuitsScolairesPage() {
 
   const [chargement, setChargement] =
     useState(true);
+
+  /*
+   * SAMSARA LIVE / MAPBOX
+   */
+  const [samsaraLiveParCircuit, setSamsaraLiveParCircuit] =
+    useState<Record<string, SamsaraLiveVehicle>>({});
+  const [samsaraStatutsChargement, setSamsaraStatutsChargement] =
+    useState(false);
+  const [modalGpsOuvert, setModalGpsOuvert] = useState(false);
+  const [circuitGpsActif, setCircuitGpsActif] =
+    useState<CircuitScolaire | null>(null);
+  const [vehiculeGpsActif, setVehiculeGpsActif] =
+    useState<SamsaraLiveVehicle | null>(null);
+  const [gpsChargement, setGpsChargement] = useState(false);
+  const [gpsErreur, setGpsErreur] = useState<string | null>(null);
+  const [suiviGps, setSuiviGps] = useState(true);
 
   /*
    * FILTRES / TRI
@@ -556,6 +606,7 @@ export default function CircuitsScolairesPage() {
       }));
 
     setCircuits(resultat);
+    void chargerStatutsSamsaraLive(resultat);
   }
 
   async function chargerContacts() {
@@ -618,6 +669,272 @@ export default function CircuitsScolairesPage() {
 
     setRemplacants(resultat);
   }
+
+  async function appelerSamsaraLive(unites: string[]) {
+    const uniques = Array.from(
+      new Set(unites.map((u) => u.trim()).filter(Boolean))
+    );
+
+    if (uniques.length === 0) {
+      return {} as Record<string, SamsaraLiveVehicle>;
+    }
+
+    const { data, error } = await circuitSupabase.functions.invoke(
+      "circuit-samsara-live",
+      {
+        body: { units: uniques },
+      }
+    );
+
+    if (error) throw error;
+    if (data?.ok === false) {
+      throw new Error(data?.error || "Lecture Samsara impossible.");
+    }
+
+    return (data?.vehicles || {}) as Record<string, SamsaraLiveVehicle>;
+  }
+
+  async function chargerStatutsSamsaraLive(
+    liste: CircuitScolaire[] = circuits
+  ) {
+    try {
+      setSamsaraStatutsChargement(true);
+
+      const parUnite = await appelerSamsaraLive(
+        liste.map((item) => item.unite)
+      );
+
+      const parCircuit: Record<string, SamsaraLiveVehicle> = {};
+
+      for (const item of liste) {
+        const unite = item.unite.trim();
+        parCircuit[item.id] =
+          parUnite[unite] || {
+            found: false,
+            unit: unite,
+            vehicleId: null,
+            vehicleName: null,
+            latitude: null,
+            longitude: null,
+            headingDegrees: null,
+            speedKph: null,
+            fuelPercent: null,
+            batterySocPercent: null,
+            address: null,
+            updatedAt: null,
+          };
+      }
+
+      setSamsaraLiveParCircuit(parCircuit);
+    } catch (error) {
+      console.error("Erreur statuts Samsara live", error);
+    } finally {
+      setSamsaraStatutsChargement(false);
+    }
+  }
+
+  async function rafraichirVehiculeGps(
+    circuit: CircuitScolaire,
+    afficherChargement = false
+  ) {
+    try {
+      if (afficherChargement) setGpsChargement(true);
+      setGpsErreur(null);
+
+      const unite = circuit.unite.trim();
+      const parUnite = await appelerSamsaraLive([unite]);
+      const vehicule =
+        parUnite[unite] || {
+          found: false,
+          unit: unite,
+          vehicleId: null,
+          vehicleName: null,
+          latitude: null,
+          longitude: null,
+          headingDegrees: null,
+          speedKph: null,
+          fuelPercent: null,
+          batterySocPercent: null,
+          address: null,
+          updatedAt: null,
+        };
+
+      setVehiculeGpsActif(vehicule);
+      setSamsaraLiveParCircuit((prev) => ({
+        ...prev,
+        [circuit.id]: vehicule,
+      }));
+
+      if (!vehicule.found) {
+        setGpsErreur(`Aucun véhicule Samsara trouvé pour l’unité ${unite}.`);
+      }
+    } catch (error: any) {
+      console.error("Erreur Samsara live", error);
+      setGpsErreur(error?.message || "Impossible de lire la position Samsara.");
+    } finally {
+      if (afficherChargement) setGpsChargement(false);
+    }
+  }
+
+  function ouvrirCarteGps(circuit: CircuitScolaire) {
+    const live = samsaraLiveParCircuit[circuit.id];
+
+    if (!live?.found) return;
+
+    setCircuitGpsActif(circuit);
+    setVehiculeGpsActif(live);
+    setGpsErreur(null);
+    setSuiviGps(true);
+    setModalGpsOuvert(true);
+    void rafraichirVehiculeGps(circuit, true);
+  }
+
+  function fermerCarteGps() {
+    setModalGpsOuvert(false);
+    setCircuitGpsActif(null);
+    setVehiculeGpsActif(null);
+    setGpsErreur(null);
+    setSuiviGps(true);
+
+    gpsMarkerRef.current?.remove();
+    gpsMarkerRef.current = null;
+
+    gpsMapRef.current?.remove();
+    gpsMapRef.current = null;
+  }
+
+  function recentrerGps() {
+    const map = gpsMapRef.current;
+    const live = vehiculeGpsActif;
+
+    if (
+      !map ||
+      live?.latitude == null ||
+      live?.longitude == null
+    ) {
+      return;
+    }
+
+    setSuiviGps(true);
+    map.easeTo({
+      center: [live.longitude, live.latitude],
+      zoom: Math.max(map.getZoom(), 14),
+      duration: 500,
+    });
+  }
+
+  useEffect(() => {
+    if (!modalGpsOuvert || !circuitGpsActif) return;
+
+    const timer = window.setInterval(() => {
+      void rafraichirVehiculeGps(circuitGpsActif, false);
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [modalGpsOuvert, circuitGpsActif?.id]);
+
+  useEffect(() => {
+    if (!modalGpsOuvert || !gpsMapContainerRef.current) return;
+
+    const token =
+      import.meta.env.VITE_MAPBOX_TOKEN ||
+      import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
+    if (!token) {
+      setGpsErreur(
+        "Jeton Mapbox introuvable. Utilise VITE_MAPBOX_TOKEN ou VITE_MAPBOX_ACCESS_TOKEN."
+      );
+      return;
+    }
+
+    if (gpsMapRef.current) return;
+
+    mapboxgl.accessToken = token;
+
+    const longitude = vehiculeGpsActif?.longitude ?? -70.67;
+    const latitude = vehiculeGpsActif?.latitude ?? 46.12;
+
+    const map = new mapboxgl.Map({
+      container: gpsMapContainerRef.current,
+      style: "mapbox://styles/mapbox/streets-v12",
+      center: [longitude, latitude],
+      zoom:
+        vehiculeGpsActif?.latitude != null &&
+        vehiculeGpsActif?.longitude != null
+          ? 14
+          : 9,
+    });
+
+    map.addControl(new mapboxgl.NavigationControl(), "top-right");
+
+    map.on("dragstart", () => setSuiviGps(false));
+    map.on("zoomstart", (event: any) => {
+      if (event?.originalEvent) setSuiviGps(false);
+    });
+
+    gpsMapRef.current = map;
+
+    return () => {
+      gpsMarkerRef.current?.remove();
+      gpsMarkerRef.current = null;
+      map.remove();
+      if (gpsMapRef.current === map) gpsMapRef.current = null;
+    };
+  }, [modalGpsOuvert]);
+
+  useEffect(() => {
+    const map = gpsMapRef.current;
+    const live = vehiculeGpsActif;
+
+    if (
+      !map ||
+      !live?.found ||
+      live.latitude == null ||
+      live.longitude == null
+    ) {
+      return;
+    }
+
+    const lngLat: [number, number] = [
+      live.longitude,
+      live.latitude,
+    ];
+
+    if (!gpsMarkerRef.current) {
+      const el = document.createElement("div");
+      el.style.width = "46px";
+      el.style.height = "46px";
+      el.style.borderRadius = "50%";
+      el.style.background = "#ffffff";
+      el.style.border = "3px solid #16a34a";
+      el.style.display = "grid";
+      el.style.placeItems = "center";
+      el.style.fontSize = "25px";
+      el.style.boxShadow = "0 4px 14px rgba(0,0,0,.22)";
+      el.textContent = "🚌";
+
+      gpsMarkerRef.current = new mapboxgl.Marker({
+        element: el,
+        anchor: "center",
+      })
+        .setLngLat(lngLat)
+        .addTo(map);
+    } else {
+      gpsMarkerRef.current.setLngLat(lngLat);
+    }
+
+    if (suiviGps) {
+      map.easeTo({
+        center: lngLat,
+        duration: 650,
+      });
+    }
+  }, [
+    vehiculeGpsActif?.latitude,
+    vehiculeGpsActif?.longitude,
+    vehiculeGpsActif?.headingDegrees,
+    suiviGps,
+  ]);
 
   /*
    * TRI
@@ -2333,6 +2650,8 @@ export default function CircuitsScolairesPage() {
                   )}
                 </th>
 
+                <th>GPS</th>
+
                 <th
                   className="sortable-head"
                   onClick={() =>
@@ -2406,6 +2725,68 @@ export default function CircuitsScolairesPage() {
                     <td>
                       {item.localisation ||
                         "—"}
+                    </td>
+
+                    <td>
+                      {(() => {
+                        const live = samsaraLiveParCircuit[item.id];
+
+                        if (samsaraStatutsChargement && !live) {
+                          return (
+                            <span className="muted">
+                              Vérification…
+                            </span>
+                          );
+                        }
+
+                        if (live?.found) {
+                          return (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                ouvrirCarteGps(item);
+                              }}
+                              onDoubleClick={(e) =>
+                                e.stopPropagation()
+                              }
+                              title="Ouvrir la position en temps réel"
+                              style={{
+                                border: "1px solid #86efac",
+                                background: "#f0fdf4",
+                                color: "#166534",
+                                borderRadius: 999,
+                                padding: "6px 10px",
+                                fontWeight: 800,
+                                cursor: "pointer",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              ● Samsara
+                            </button>
+                          );
+                        }
+
+                        return (
+                          <span
+                            title="Aucun véhicule Samsara trouvé pour cette unité"
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                              border: "1px solid #fecaca",
+                              background: "#fef2f2",
+                              color: "#991b1b",
+                              borderRadius: 999,
+                              padding: "6px 10px",
+                              fontWeight: 800,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            ● Aucun Samsara
+                          </span>
+                        );
+                      })()}
                     </td>
 
                     <td>
@@ -2540,6 +2921,262 @@ export default function CircuitsScolairesPage() {
           </table>
         </div>
       </div>
+
+      {/* CARTE GPS SAMSARA */}
+
+      {modalGpsOuvert && circuitGpsActif && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={fermerCarteGps}
+          style={{ zIndex: 2000 }}
+        >
+          <div
+            className="modal-card"
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              width: "min(1500px, calc(100vw - 28px))",
+              maxWidth: "none",
+              padding: 0,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              className="modal-head"
+              style={{ padding: "16px 18px" }}
+            >
+              <div>
+                <div className="modal-title">
+                  Circuit {circuitGpsActif.circuit} · Unité{" "}
+                  {circuitGpsActif.unite}
+                </div>
+                <div className="muted">
+                  {circuitGpsActif.nomConducteur || "Conducteur non assigné"}
+                  {vehiculeGpsActif?.vehicleName
+                    ? ` · Samsara ${vehiculeGpsActif.vehicleName}`
+                    : ""}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={recentrerGps}
+                  disabled={
+                    vehiculeGpsActif?.latitude == null ||
+                    vehiculeGpsActif?.longitude == null
+                  }
+                >
+                  Recentrer
+                </button>
+
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={fermerCarteGps}
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(250px, 320px) minmax(0, 1fr)",
+                minHeight: 620,
+              }}
+            >
+              <div
+                style={{
+                  padding: 18,
+                  borderRight: "1px solid #e5e7eb",
+                  background: "#fff",
+                  display: "grid",
+                  alignContent: "start",
+                  gap: 12,
+                }}
+              >
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontWeight: 900,
+                    color: vehiculeGpsActif?.found
+                      ? "#166534"
+                      : "#991b1b",
+                  }}
+                >
+                  <span>
+                    {vehiculeGpsActif?.found ? "●" : "●"}
+                  </span>
+                  {vehiculeGpsActif?.found
+                    ? "Samsara connecté"
+                    : "Aucun Samsara"}
+                </div>
+
+                {gpsChargement && (
+                  <div className="muted">
+                    Lecture de la position…
+                  </div>
+                )}
+
+                {gpsErreur && (
+                  <div
+                    style={{
+                      border: "1px solid #fecaca",
+                      background: "#fef2f2",
+                      color: "#991b1b",
+                      borderRadius: 10,
+                      padding: 10,
+                      fontSize: 13,
+                    }}
+                  >
+                    {gpsErreur}
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 10,
+                  }}
+                >
+                  <div
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 12,
+                      padding: 12,
+                    }}
+                  >
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      Vitesse
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontWeight: 900,
+                        fontSize: 22,
+                      }}
+                    >
+                      {vehiculeGpsActif?.speedKph != null
+                        ? `${Math.round(
+                            vehiculeGpsActif.speedKph
+                          )} km/h`
+                        : "—"}
+                    </div>
+                  </div>
+
+                  {vehiculeGpsActif?.fuelPercent != null && (
+                    <div
+                      style={{
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 12,
+                        padding: 12,
+                      }}
+                    >
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        Carburant
+                      </div>
+                      <div
+                        style={{
+                          marginTop: 4,
+                          fontWeight: 900,
+                          fontSize: 22,
+                        }}
+                      >
+                        {Math.round(
+                          vehiculeGpsActif.fuelPercent
+                        )}
+                        %
+                      </div>
+                    </div>
+                  )}
+
+                  {vehiculeGpsActif?.batterySocPercent != null && (
+                    <div
+                      style={{
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 12,
+                        padding: 12,
+                      }}
+                    >
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        État de charge
+                      </div>
+                      <div
+                        style={{
+                          marginTop: 4,
+                          fontWeight: 900,
+                          fontSize: 22,
+                        }}
+                      >
+                        {Math.round(
+                          vehiculeGpsActif.batterySocPercent
+                        )}
+                        %
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="label">
+                    Dernière position
+                  </div>
+                  <div style={{ fontWeight: 800, marginTop: 3 }}>
+                    {formatHeureLive(
+                      vehiculeGpsActif?.updatedAt ?? null
+                    )}
+                  </div>
+                </div>
+
+                {vehiculeGpsActif?.address && (
+                  <div>
+                    <div className="label">Adresse</div>
+                    <div style={{ marginTop: 3 }}>
+                      {vehiculeGpsActif.address}
+                    </div>
+                  </div>
+                )}
+
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Mise à jour automatique toutes les 5 secondes.
+                  Le suivi automatique s’arrête si tu déplaces la carte.
+                </div>
+
+                {!suiviGps && (
+                  <button
+                    className="btn-primary"
+                    type="button"
+                    onClick={recentrerGps}
+                  >
+                    Reprendre le suivi de l’autobus
+                  </button>
+                )}
+              </div>
+
+              <div
+                ref={gpsMapContainerRef}
+                style={{
+                  minHeight: 620,
+                  width: "100%",
+                  background: "#f3f4f6",
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL CIRCUIT */}
 
