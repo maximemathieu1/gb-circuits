@@ -138,21 +138,7 @@ export default function CarteUnitesPage() {
         marker = new mapboxgl.Marker({ element: el, anchor: "center" }).setLngLat(lngLat).addTo(map);
         markersRef.current.set(vehicle.key, marker);
       } else {
-        const start = marker.getLngLat();
-        const startTime = performance.now();
-        const duration = Math.min(REFRESH_MS - 300, 1800);
-        const animate = (now: number) => {
-          const current = markersRef.current.get(vehicle.key);
-          if (!current) return;
-          const t = Math.min(1, (now - startTime) / duration);
-          const eased = 1 - Math.pow(1 - t, 3);
-          current.setLngLat([
-            start.lng + (lngLat[0] - start.lng) * eased,
-            start.lat + (lngLat[1] - start.lat) * eased,
-          ]);
-          if (t < 1) requestAnimationFrame(animate);
-        };
-        requestAnimationFrame(animate);
+        marker.setLngLat(lngLat);
       }
 
       const element = marker.getElement();
