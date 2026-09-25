@@ -697,9 +697,26 @@ export default function CircuitsScolairesPage() {
     setRemplacants(resultat);
   }
 
-  async function appelerSamsaraLive(unites: string[]) {
+  function cleSamsaraLive(compagnie: Compagnie, unite: string) {
+    return `${compagnie}::${unite.trim()}`;
+  }
+
+  async function appelerSamsaraLive(
+    vehicules: Array<{ unit: string; compagnie: Compagnie }>
+  ) {
     const uniques = Array.from(
-      new Set(unites.map((u) => u.trim()).filter(Boolean))
+      new Map(
+        vehicules
+          .map((item) => ({
+            unit: item.unit.trim(),
+            compagnie: item.compagnie,
+          }))
+          .filter((item) => item.unit)
+          .map((item) => [
+            cleSamsaraLive(item.compagnie, item.unit),
+            item,
+          ])
+      ).values()
     );
 
     if (uniques.length === 0) {
@@ -709,13 +726,13 @@ export default function CircuitsScolairesPage() {
     const { data, error } = await circuitSupabase.functions.invoke(
       "circuit-samsara-live",
       {
-        body: { units: uniques },
+        body: { vehicles: uniques },
       }
     );
 
     if (error) throw error;
     if (data?.ok === false) {
-      throw new Error(data?.error || "Lecture Samsara impossible.");
+      throw new Error(data?.error || "Lecture GPS impossible.");
     }
 
     return (data?.vehicles || {}) as Record<string, SamsaraLiveVehicle>;
@@ -728,15 +745,20 @@ export default function CircuitsScolairesPage() {
       setSamsaraStatutsChargement(true);
 
       const parUnite = await appelerSamsaraLive(
-        liste.map((item) => item.unite)
+        liste.map((item) => ({
+          unit: item.unite,
+          compagnie: item.compagnie,
+        }))
       );
 
       const parCircuit: Record<string, SamsaraLiveVehicle> = {};
 
       for (const item of liste) {
         const unite = item.unite.trim();
+        const cle = cleSamsaraLive(item.compagnie, unite);
+
         parCircuit[item.id] =
-          parUnite[unite] || {
+          parUnite[cle] || {
             found: false,
             unit: unite,
             vehicleId: null,
@@ -769,9 +791,17 @@ export default function CircuitsScolairesPage() {
       setGpsErreur(null);
 
       const unite = circuit.unite.trim();
-      const parUnite = await appelerSamsaraLive([unite]);
+      const cle = cleSamsaraLive(circuit.compagnie, unite);
+
+      const parUnite = await appelerSamsaraLive([
+        {
+          unit: unite,
+          compagnie: circuit.compagnie,
+        },
+      ]);
+
       const vehicule =
-        parUnite[unite] || {
+        parUnite[cle] || {
           found: false,
           unit: unite,
           vehicleId: null,
@@ -793,11 +823,11 @@ export default function CircuitsScolairesPage() {
       }));
 
       if (!vehicule.found) {
-        setGpsErreur(`Aucun véhicule Samsara trouvé pour l’unité ${unite}.`);
+        setGpsErreur(`Aucun GPS trouvé pour l’unité ${unite} (${circuit.compagnie}).`);
       }
     } catch (error: any) {
-      console.error("Erreur Samsara live", error);
-      setGpsErreur(error?.message || "Impossible de lire la position Samsara.");
+      console.error("Erreur GPS live", error);
+      setGpsErreur(error?.message || "Impossible de lire la position GPS.");
     } finally {
       if (afficherChargement) setGpsChargement(false);
     }
