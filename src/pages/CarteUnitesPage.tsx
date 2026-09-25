@@ -222,6 +222,29 @@ export default function CarteUnitesPage() {
 
   return (
     <div className="fleet-page">
+
+      <style>{`
+        .fleet-page { position: relative; width: 100%; height: calc(100vh - 0px); min-height: 620px; overflow: hidden; background: #e5e7eb; }
+        .fleet-map { position: absolute; inset: 0; width: 100%; height: 100%; }
+        .fleet-toolbar { position: absolute; z-index: 5; top: 18px; left: 18px; right: 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; background: rgba(255,255,255,.96); border: 1px solid rgba(15,23,42,.10); border-radius: 14px; box-shadow: 0 8px 28px rgba(15,23,42,.16); backdrop-filter: blur(8px); }
+        .fleet-title { font-size: 18px; font-weight: 800; color: #0f172a; }
+        .fleet-status { margin-top: 3px; display: flex; align-items: center; gap: 7px; font-size: 12px; color: #64748b; }
+        .fleet-live-dot { width: 8px; height: 8px; border-radius: 999px; background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.15); }
+        .fleet-live-dot.is-error { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,.15); }
+        .fleet-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+        .fleet-filter { appearance: none; border: 1px solid #dbe2ea; background: #fff; color: #334155; border-radius: 9px; padding: 8px 11px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; transition: .15s ease; }
+        .fleet-filter:hover { background: #f8fafc; border-color: #cbd5e1; }
+        .fleet-filter.active { color: #fff; background: #1d4ed8; border-color: #1d4ed8; }
+        .fleet-filter:disabled { opacity: .5; cursor: default; }
+        .fleet-count { position: absolute; z-index: 5; left: 18px; bottom: 18px; padding: 9px 12px; border-radius: 10px; background: rgba(15,23,42,.88); color: #fff; font-size: 13px; font-weight: 700; box-shadow: 0 5px 18px rgba(15,23,42,.18); }
+        .fleet-marker { --heading: 0deg; position: relative; display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; padding: 0; border: 3px solid #fff; border-radius: 50%; background: var(--fleet-color); color: #fff; box-shadow: 0 4px 14px rgba(15,23,42,.35); cursor: pointer; }
+        .fleet-marker-arrow { position: absolute; top: -11px; left: 50%; font-size: 13px; line-height: 1; color: var(--fleet-color); transform: translateX(-50%) rotate(var(--heading)); transform-origin: 50% 17px; text-shadow: 0 1px 1px #fff, 0 -1px 1px #fff, 1px 0 1px #fff, -1px 0 1px #fff; }
+        .fleet-marker-label { position: relative; z-index: 1; max-width: 38px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 900; letter-spacing: -.2px; }
+        .fleet-popup { min-width: 170px; color: #0f172a; font-size: 13px; line-height: 1.45; }
+        .fleet-popup strong { display: block; margin-bottom: 4px; font-size: 15px; }
+        .mapboxgl-popup-content { border-radius: 10px; padding: 12px 14px; box-shadow: 0 8px 24px rgba(15,23,42,.18); }
+        @media (max-width: 760px) { .fleet-toolbar { align-items: flex-start; flex-direction: column; } .fleet-actions { justify-content: flex-start; } }
+      `}</style>
       <div ref={mapNode} className="fleet-map" />
       <div className="fleet-toolbar">
         <div>
