@@ -178,14 +178,7 @@ export default function CarteUnitesPage() {
       fitAll();
     }
   }, [displayVehicles, fitAll]);
-
-  useEffect(() => {
-    if (hasFittedRef.current) fitAll();
-  }, [filter, fitAll]);
-
-
-
-  return (
+return (
     <div className="fleet-page">
 
       <style>{`
