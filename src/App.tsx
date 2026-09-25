@@ -9,6 +9,7 @@ import {
 } from "react-router-dom";
 
 import CircuitsScolairesPage from "./pages/CircuitsScolairesPage";
+import CarteUnitesPage from "./pages/CarteUnitesPage";
 
 import DispatchCircuits from "./pages/DispatchCircuits";
 import DispatchCircuitDetail from "./pages/DispatchCircuitDetail";
@@ -221,6 +222,13 @@ function AppShell() {
           >
             Circuit Tablette GPS
           </NavLink>
+
+          <NavLink
+            to="/admin/carte-unites"
+            className={linkClass}
+          >
+            Carte des unités
+          </NavLink>
         </div>
 
         <div className="section">
@@ -260,6 +268,11 @@ function AppShell() {
           <Route
             path="circuits-scolaires"
             element={<CircuitsScolairesPage />}
+          />
+
+          <Route
+            path="carte-unites"
+            element={<CarteUnitesPage />}
           />
 
           {/* =========================
