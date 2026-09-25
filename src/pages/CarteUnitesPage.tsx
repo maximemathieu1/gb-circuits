@@ -23,10 +23,6 @@ type DisplayVehicle = LiveVehicle & { compagnie: Compagnie; key: string };
 const REFRESH_MS = 5000;
 const companyColor: Record<Compagnie, string> = { AB: "#2563eb", AC: "#f59e0b", TS: "#16a34a" };
 
-function liveKey(compagnie: Compagnie, unit: string) {
-  return `${compagnie}::${unit.trim()}`;
-}
-
 function fmtUpdated(value: string | null) {
   if (!value) return "—";
   const date = new Date(value);
