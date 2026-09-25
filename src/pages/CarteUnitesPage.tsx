@@ -4,7 +4,6 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import { circuitSupabase } from "../lib/circuitSupabase";
 
 type Compagnie = "AB" | "AC" | "TS";
-type VehicleRequest = { unit: string; compagnie: Compagnie };
 type LiveVehicle = {
   found: boolean;
   unit: string;
@@ -42,7 +41,6 @@ export default function CarteUnitesPage() {
   const hasFittedRef = useRef(false);
   const busyRef = useRef(false);
 
-  const [requests, setRequests] = useState<VehicleRequest[]>([]);
   const [vehicles, setVehicles] = useState<Record<string, LiveVehicle>>({});
   const [filter, setFilter] = useState<"ALL" | Compagnie>("ALL");
   const [loading, setLoading] = useState(true);
@@ -73,40 +71,13 @@ export default function CarteUnitesPage() {
     };
   }, []);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      const { data, error: dbError } = await circuitSupabase
-        .from("circuits_scolaires")
-        .select("unite, compagnie")
-        .not("unite", "is", null);
-      if (!alive) return;
-      if (dbError) {
-        setError(dbError.message);
-        setLoading(false);
-        return;
-      }
-      const unique = Array.from(
-        new Map(
-          (data || [])
-            .map((row: any) => ({ unit: String(row.unite || "").trim(), compagnie: row.compagnie as Compagnie }))
-            .filter((row) => row.unit && ["AB", "AC", "TS"].includes(row.compagnie))
-            .map((row) => [liveKey(row.compagnie, row.unit), row]),
-        ).values(),
-      );
-      setRequests(unique);
-      if (unique.length === 0) setLoading(false);
-    })();
-    return () => { alive = false; };
-  }, []);
-
   const refresh = useCallback(async () => {
-    if (!requests.length || busyRef.current) return;
+    if (busyRef.current) return;
     busyRef.current = true;
     setRefreshing(true);
     try {
       const { data, error: fnError } = await circuitSupabase.functions.invoke("circuit-samsara-live", {
-        body: { vehicles: requests },
+        body: { mode: "fleet" },
       });
       if (fnError) throw fnError;
       if (data?.ok === false) throw new Error(data?.error || "Lecture GPS impossible.");
@@ -120,25 +91,23 @@ export default function CarteUnitesPage() {
       setRefreshing(false);
       setLoading(false);
     }
-  }, [requests]);
+  }, []);
 
   useEffect(() => {
-    if (!requests.length) return;
     void refresh();
     const timer = window.setInterval(() => void refresh(), REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [requests, refresh]);
+  }, [refresh]);
 
   const displayVehicles = useMemo<DisplayVehicle[]>(() => {
-    return requests
-      .map((req) => {
-        const key = liveKey(req.compagnie, req.unit);
-        const live = vehicles[key];
-        return live ? { ...live, compagnie: req.compagnie, key } : null;
+    return Object.entries(vehicles)
+      .map(([key, live]) => {
+        const code = key.split("::")[0] as Compagnie;
+        return { ...live, compagnie: code, key };
       })
-      .filter((v): v is DisplayVehicle => Boolean(v?.found && Number.isFinite(v.latitude) && Number.isFinite(v.longitude)))
+      .filter((v) => v.found && Number.isFinite(v.latitude) && Number.isFinite(v.longitude))
       .filter((v) => filter === "ALL" || v.compagnie === filter);
-  }, [requests, vehicles, filter]);
+  }, [vehicles, filter]);
 
   const fitAll = useCallback(() => {
     const map = mapRef.current;
