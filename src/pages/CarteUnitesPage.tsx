@@ -426,6 +426,47 @@ function buildTimelineGradient(points: HistoryPoint[], stops: HistoryStop[]) {
   return `linear-gradient(to right, ${parts.join(", ")})`;
 }
 
+function interpolateHeading(
+  from: number | null,
+  to: number | null,
+  t: number,
+) {
+  if (from == null && to == null) return null;
+  if (from == null) return to;
+  if (to == null) return from;
+
+  const delta = ((to - from + 540) % 360) - 180;
+  return (from + delta * t + 360) % 360;
+}
+
+function interpolateVehicle(
+  from: DisplayVehicle,
+  to: DisplayVehicle,
+  t: number,
+): DisplayVehicle {
+  const fromLat = Number(from.latitude);
+  const fromLng = Number(from.longitude);
+  const toLat = Number(to.latitude);
+  const toLng = Number(to.longitude);
+
+  return {
+    ...to,
+    latitude:
+      Number.isFinite(fromLat) && Number.isFinite(toLat)
+        ? fromLat + (toLat - fromLat) * t
+        : to.latitude,
+    longitude:
+      Number.isFinite(fromLng) && Number.isFinite(toLng)
+        ? fromLng + (toLng - fromLng) * t
+        : to.longitude,
+    headingDegrees: interpolateHeading(
+      from.headingDegrees,
+      to.headingDegrees,
+      t,
+    ),
+  };
+}
+
 function validCoordinate(vehicle: Pick<DisplayVehicle, "latitude" | "longitude">) {
   const lat = Number(vehicle.latitude);
   const lng = Number(vehicle.longitude);
@@ -524,6 +565,10 @@ export default function CarteUnitesPage() {
   const searchWasActiveRef = useRef(false);
   const socBusyRef = useRef(false);
   const lastSocRefreshRef = useRef(0);
+  const mapAnimationFrameRef = useRef<number | null>(null);
+  const renderedMapVehiclesRef = useRef<DisplayVehicle[]>([]);
+  const lastAutoFollowSearchRef = useRef("");
+  const manualSearchOverrideRef = useRef(false);
 
   const [vehicles, setVehicles] = useState<Record<string, LiveVehicle>>({});
   const [circuits, setCircuits] = useState<CircuitRow[]>([]);
@@ -733,15 +778,88 @@ export default function CarteUnitesPage() {
     return true;
   }, []);
 
-  const syncMapData = useCallback((items: DisplayVehicle[]) => {
-    const map = mapRef.current;
-    if (!map || !mapReadyRef.current) return;
+  const syncMapData = useCallback(
+    (items: DisplayVehicle[], animate = true) => {
+      const map = mapRef.current;
+      if (!map || !mapReadyRef.current) return;
 
-    const source = map.getSource(SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
-    if (!source) return;
+      const source = map.getSource(SOURCE_ID) as
+        | mapboxgl.GeoJSONSource
+        | undefined;
 
-    source.setData(toGeoJson(items) as any);
-  }, []);
+      if (!source) return;
+
+      if (mapAnimationFrameRef.current != null) {
+        window.cancelAnimationFrame(mapAnimationFrameRef.current);
+        mapAnimationFrameRef.current = null;
+      }
+
+      const previous = renderedMapVehiclesRef.current;
+      const previousByKey = new Map(
+        previous.map((item) => [item.key, item]),
+      );
+
+      if (!animate || previous.length === 0) {
+        renderedMapVehiclesRef.current = items;
+        source.setData(toGeoJson(items) as any);
+        return;
+      }
+
+      // Interpolation presque jusqu'au prochain refresh Samsara.
+      // Résultat : déplacement continu au lieu d'un bond toutes les ~5 s.
+      const durationMs = Math.max(1000, REFRESH_MS - 350);
+      const startedAt = performance.now();
+
+      const step = (now: number) => {
+        const rawT = Math.min(1, (now - startedAt) / durationMs);
+        const t = rawT * rawT * (3 - 2 * rawT);
+
+        const interpolated = items.map((target) => {
+          const origin = previousByKey.get(target.key);
+
+          if (
+            !origin ||
+            !validCoordinate(origin) ||
+            !validCoordinate(target)
+          ) {
+            return target;
+          }
+
+          return interpolateVehicle(origin, target, t);
+        });
+
+        renderedMapVehiclesRef.current = interpolated;
+        source.setData(toGeoJson(interpolated) as any);
+
+        // En mode suivi, la caméra suit exactement le même mouvement fluide.
+        const followedKey = followKeyRef.current;
+        if (followedKey) {
+          const followed = interpolated.find(
+            (vehicle) => vehicle.key === followedKey,
+          );
+
+          if (followed && validCoordinate(followed)) {
+            map.setCenter([
+              Number(followed.longitude),
+              Number(followed.latitude),
+            ]);
+          }
+        }
+
+        if (rawT < 1) {
+          mapAnimationFrameRef.current =
+            window.requestAnimationFrame(step);
+        } else {
+          renderedMapVehiclesRef.current = items;
+          mapAnimationFrameRef.current = null;
+        }
+      };
+
+      mapAnimationFrameRef.current =
+        window.requestAnimationFrame(step);
+    },
+    [],
+  );
 
   const selectVehicle = useCallback((key: string, center = false) => {
     const vehicle = latestDisplayRef.current.find((item) => item.key === key);
@@ -897,16 +1015,6 @@ export default function CarteUnitesPage() {
       if (didFit) firstFitDoneRef.current = true;
     }
 
-    const follow = followKeyRef.current;
-    if (follow) {
-      const vehicle = allDisplayVehicles.find((item) => item.key === follow);
-      if (vehicle && validCoordinate(vehicle)) {
-        mapRef.current?.easeTo({
-          center: [Number(vehicle.longitude), Number(vehicle.latitude)],
-          duration: 650,
-        });
-      }
-    }
   }, [mapVehicles, displayVehicles, allDisplayVehicles, fitVehicles, syncMapData]);
 
   useEffect(() => {
@@ -1086,11 +1194,11 @@ export default function CarteUnitesPage() {
             ["linear"],
             ["zoom"],
             7,
-            15,
+            17,
             12,
-            18,
-            16,
             21,
+            16,
+            24,
           ],
           "text-rotate": ["get", "heading"],
           "text-rotation-alignment": "map",
@@ -1263,7 +1371,8 @@ export default function CarteUnitesPage() {
         },
       });
 
-      syncMapData(latestDisplayRef.current);
+      renderedMapVehiclesRef.current = latestDisplayRef.current;
+      syncMapData(latestDisplayRef.current, false);
 
       if (
         !firstFitDoneRef.current &&
@@ -1369,6 +1478,12 @@ export default function CarteUnitesPage() {
 
     return () => {
       routeAbortRef.current?.abort();
+
+      if (mapAnimationFrameRef.current != null) {
+        window.cancelAnimationFrame(mapAnimationFrameRef.current);
+        mapAnimationFrameRef.current = null;
+      }
+
       mapReadyRef.current = false;
       mapRef.current = null;
       map.remove();
@@ -1810,7 +1925,42 @@ export default function CarteUnitesPage() {
   useEffect(() => {
     const handler = () => {
       setFullscreen(Boolean(document.fullscreenElement));
-      window.setTimeout(() => mapRef.current?.resize(), 50);
+
+      const resizeAndRecenter = () => {
+        const map = mapRef.current;
+        if (!map) return;
+
+        map.resize();
+
+        const followedKey = followKeyRef.current;
+        const followed = followedKey
+          ? latestDisplayRef.current.find(
+              (vehicle) => vehicle.key === followedKey,
+            )
+          : null;
+
+        const selectedKey = selectedKeyRef.current;
+        const selected = selectedKey
+          ? latestDisplayRef.current.find(
+              (vehicle) => vehicle.key === selectedKey,
+            )
+          : null;
+
+        const target = followed ?? selected;
+
+        if (target && validCoordinate(target)) {
+          map.jumpTo({
+            center: [
+              Number(target.longitude),
+              Number(target.latitude),
+            ],
+          });
+        }
+      };
+
+      window.requestAnimationFrame(resizeAndRecenter);
+      window.setTimeout(resizeAndRecenter, 120);
+      window.setTimeout(resizeAndRecenter, 320);
     };
 
     document.addEventListener("fullscreenchange", handler);
@@ -1939,6 +2089,7 @@ export default function CarteUnitesPage() {
   }, [historyTimelinePoints, historyIndex]);
 
   const toggleSidebar = useCallback(() => {
+    manualSearchOverrideRef.current = true;
     setSidebarOpen((open) => !open);
 
     // Mapbox doit recalculer sa largeur pendant/après l'animation du panneau.
@@ -1948,6 +2099,34 @@ export default function CarteUnitesPage() {
   }, []);
 
   const handleCenter = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    map.resize();
+
+    const followedKey = followKeyRef.current;
+    const followed = followedKey
+      ? latestDisplayRef.current.find(
+          (vehicle) => vehicle.key === followedKey,
+        )
+      : null;
+
+    const target =
+      followed ??
+      (displayVehicles.length === 1 ? displayVehicles[0] : null);
+
+    if (target && validCoordinate(target)) {
+      map.easeTo({
+        center: [
+          Number(target.longitude),
+          Number(target.latitude),
+        ],
+        zoom: Math.max(map.getZoom(), 15),
+        duration: 450,
+      });
+      return;
+    }
+
     fitVehicles(displayVehicles, true);
   }, [displayVehicles, fitVehicles]);
 
@@ -1965,6 +2144,9 @@ export default function CarteUnitesPage() {
 
   const toggleFollow = useCallback(() => {
     if (!selectedVehicle) return;
+
+    // Une action manuelle doit toujours avoir priorité sur le filtre.
+    manualSearchOverrideRef.current = true;
 
     if (followKey === selectedVehicle.key) {
       setFollowKey(null);
@@ -2000,19 +2182,27 @@ export default function CarteUnitesPage() {
       }
 
       searchWasActiveRef.current = false;
+      lastAutoFollowSearchRef.current = "";
+      manualSearchOverrideRef.current = false;
       return;
     }
 
     searchWasActiveRef.current = true;
 
-    // Si l'historique est ouvert, la recherche reste affichée mais ne doit
-    // pas réactiver automatiquement le suivi de l'unité.
-    if (historyOpen) return;
+    // Historique ou action manuelle : le filtre demeure visible,
+    // mais il ne reprend jamais le contrôle tout seul.
+    if (historyOpen || manualSearchOverrideRef.current) return;
+
+    // Important : un refresh GPS change displayVehicles toutes les 5 s.
+    // On ne doit donc auto-suivre qu'une seule fois par valeur recherchée.
+    if (lastAutoFollowSearchRef.current === q) return;
 
     const exactMatches = displayVehicles.filter((vehicle) => {
       return (
         normalizeText(vehicle.unit) === q ||
-        vehicle.circuits.some((circuit) => normalizeText(circuit) === q)
+        vehicle.circuits.some(
+          (circuit) => normalizeText(circuit) === q,
+        )
       );
     });
 
@@ -2025,19 +2215,21 @@ export default function CarteUnitesPage() {
 
     if (!target) return;
 
+    lastAutoFollowSearchRef.current = q;
     setSelectedKey(target.key);
     setSidebarOpen(true);
 
-    if (followKey !== target.key) {
-      clearRoute();
-      setHistoryOpen(false);
-      clearHistoryMap();
-      setFollowKey(target.key);
-    }
+    clearRoute();
+    setHistoryOpen(false);
+    clearHistoryMap();
+    setFollowKey(target.key);
 
     if (validCoordinate(target)) {
       mapRef.current?.easeTo({
-        center: [Number(target.longitude), Number(target.latitude)],
+        center: [
+          Number(target.longitude),
+          Number(target.latitude),
+        ],
         zoom: Math.max(mapRef.current?.getZoom() ?? 0, 15),
         duration: 500,
       });
@@ -2045,17 +2237,16 @@ export default function CarteUnitesPage() {
   }, [
     search,
     displayVehicles,
-    followKey,
     clearRoute,
     clearHistoryMap,
     historyOpen,
   ]);
 
 
-
-
   const toggleHistory = useCallback(() => {
     if (!selectedVehicle) return;
+
+    manualSearchOverrideRef.current = true;
 
     if (historyOpen) {
       setHistoryOpen(false);
@@ -2256,7 +2447,11 @@ export default function CarteUnitesPage() {
         <div className="fleet-search">
           <input
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              manualSearchOverrideRef.current = false;
+              lastAutoFollowSearchRef.current = "";
+              setSearch(event.target.value);
+            }}
             placeholder="Rechercher unité, circuit ou conducteur…"
             aria-label="Rechercher unité, circuit ou conducteur"
           />
@@ -2264,7 +2459,11 @@ export default function CarteUnitesPage() {
             <button
               type="button"
               className="fleet-search-clear"
-              onClick={() => setSearch("")}
+              onClick={() => {
+                manualSearchOverrideRef.current = false;
+                lastAutoFollowSearchRef.current = "";
+                setSearch("");
+              }}
               aria-label="Effacer la recherche"
             >
               ×
@@ -2388,9 +2587,37 @@ export default function CarteUnitesPage() {
                   type="button"
                   className="fleet-btn"
                   onClick={() => {
+                    manualSearchOverrideRef.current = true;
                     setSelectedKey(null);
                     setFollowKey(null);
+                    setHistoryOpen(false);
+                    clearHistoryMap();
                     clearRoute();
+
+                    const map = mapRef.current;
+                    if (map) {
+                      map.resize();
+
+                      window.requestAnimationFrame(() => {
+                        if (displayVehicles.length === 1) {
+                          const vehicle = displayVehicles[0];
+
+                          if (validCoordinate(vehicle)) {
+                            map.easeTo({
+                              center: [
+                                Number(vehicle.longitude),
+                                Number(vehicle.latitude),
+                              ],
+                              zoom: Math.max(map.getZoom(), 14),
+                              duration: 450,
+                            });
+                            return;
+                          }
+                        }
+
+                        fitVehicles(displayVehicles, true);
+                      });
+                    }
                   }}
                 >
                   Retour
