@@ -1437,6 +1437,10 @@ export default function CarteUnitesPage() {
 
     searchWasActiveRef.current = true;
 
+    // Si l'historique est ouvert, la recherche reste affichée mais ne doit
+    // pas réactiver automatiquement le suivi de l'unité.
+    if (historyOpen) return;
+
     const exactMatches = displayVehicles.filter((vehicle) => {
       return (
         normalizeText(vehicle.unit) === q ||
@@ -1476,6 +1480,7 @@ export default function CarteUnitesPage() {
     followKey,
     clearRoute,
     clearHistoryMap,
+    historyOpen,
   ]);
 
 
@@ -2003,45 +2008,6 @@ export default function CarteUnitesPage() {
                         </div>
                       </div>
 
-                            step={1}
-                            value={Math.min(
-                              historyIndex,
-                              historyData.points.length - 1,
-                            )}
-                            onChange={(event) =>
-                              setHistoryIndex(
-                                Number(event.target.value),
-                              )
-                            }
-                          />
-
-                          {(() => {
-                            const point =
-                              historyData.points[
-                                Math.min(
-                                  historyIndex,
-                                  historyData.points.length - 1,
-                                )
-                              ];
-
-                            return (
-                              <div className="fleet-timeline-point">
-                                <strong>{fmtTime(point.time)}</strong>
-                                <br />
-                                {point.speedKph == null
-                                  ? "Vitesse —"
-                                  : `${Math.round(point.speedKph)} km/h`}
-                                {point.address ? (
-                                  <>
-                                    <br />
-                                    {point.address}
-                                  </>
-                                ) : null}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      )}
                     </>
                   )}
                 </div>
