@@ -89,8 +89,8 @@ type SchoolRow = {
   id?: string;
   nom_ecole: string;
   adresse?: string | null;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   actif?: boolean | null;
 };
 
@@ -147,6 +147,8 @@ function schoolGeoJson(schools: SchoolRow[]) {
       .filter(
         (school) =>
           school.actif !== false &&
+          school.latitude != null &&
+          school.longitude != null &&
           Number.isFinite(Number(school.latitude)) &&
           Number.isFinite(Number(school.longitude)),
       )
@@ -563,6 +565,7 @@ export default function CarteUnitesPage() {
   const routeAbortRef = useRef<AbortController | null>(null);
   const routeRequestIdRef = useRef(0);
   const searchWasActiveRef = useRef(false);
+  const searchBoxRef = useRef<HTMLDivElement | null>(null);
   const socBusyRef = useRef(false);
   const lastSocRefreshRef = useRef(0);
   const mapAnimationFrameRef = useRef<number | null>(null);
@@ -720,24 +723,38 @@ export default function CarteUnitesPage() {
 
   const searchSuggestions = useMemo(() => {
     const q = normalizeText(searchInput);
-    if (!q) return allDisplayVehicles.slice(0, 12);
 
-    return allDisplayVehicles
-      .filter((vehicle) => {
-        if (filter !== "ALL" && vehicle.compagnie !== filter) return false;
+    return allDisplayVehicles.filter((vehicle) => {
+      if (filter !== "ALL" && vehicle.compagnie !== filter) return false;
+      if (!q) return true;
 
-        return (
-          normalizeText(vehicle.unit).includes(q) ||
-          vehicle.circuits.some((circuit) =>
-            normalizeText(circuit).includes(q),
-          ) ||
-          vehicle.conducteurs.some((name) =>
-            normalizeText(name).includes(q),
-          )
-        );
-      })
-      .slice(0, 12);
+      return (
+        normalizeText(vehicle.unit).includes(q) ||
+        vehicle.circuits.some((circuit) =>
+          normalizeText(circuit).includes(q),
+        ) ||
+        vehicle.conducteurs.some((name) =>
+          normalizeText(name).includes(q),
+        )
+      );
+    });
   }, [allDisplayVehicles, filter, searchInput]);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const box = searchBoxRef.current;
+      if (!box) return;
+
+      if (!box.contains(event.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, []);
 
   const displayVehicles = useMemo(() => {
     const q = normalizeText(search);
@@ -1137,16 +1154,16 @@ export default function CarteUnitesPage() {
             ["linear"],
             ["zoom"],
             7,
-            6,
-            12,
             8,
+            12,
+            11,
             16,
-            9,
+            13,
           ],
           "circle-color": ["get", "color"],
           "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 2,
-          "circle-opacity": 1,
+          "circle-stroke-width": 3,
+          "circle-opacity": ["get", "opacity"],
         },
       });
 
@@ -1527,6 +1544,93 @@ export default function CarteUnitesPage() {
   useEffect(() => {
     let cancelled = false;
 
+    const geocodeMissingSchools = async (rows: SchoolRow[]) => {
+      const missing = rows.filter(
+        (school) =>
+          school.actif !== false &&
+          (school.latitude == null ||
+            school.longitude == null ||
+            !Number.isFinite(Number(school.latitude)) ||
+            !Number.isFinite(Number(school.longitude))),
+      );
+
+      if (missing.length === 0) return rows;
+
+      const token =
+        import.meta.env.VITE_MAPBOX_TOKEN ||
+        import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
+      if (!token) return rows;
+
+      try {
+        const response = await fetch(
+          `https://api.mapbox.com/search/geocode/v6/batch?access_token=${encodeURIComponent(
+            token,
+          )}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(
+              missing.map((school) => ({
+                q: `${school.adresse ?? ""}, Québec, Canada`,
+                country: ["ca"],
+                bbox: [-72.5, 45.0, -68.5, 48.0],
+                limit: 1,
+              })),
+            ),
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `Géocodage Mapbox ${response.status} ${response.statusText}`,
+          );
+        }
+
+        const body = await response.json();
+        const batch = Array.isArray(body?.batch) ? body.batch : [];
+        const geocodedById = new Map<string, { lat: number; lng: number }>();
+
+        missing.forEach((school, index) => {
+          const feature = batch[index]?.features?.[0];
+          const coordinates = feature?.geometry?.coordinates;
+
+          if (
+            Array.isArray(coordinates) &&
+            Number.isFinite(Number(coordinates[0])) &&
+            Number.isFinite(Number(coordinates[1]))
+          ) {
+            geocodedById.set(
+              String(school.id ?? school.nom_ecole),
+              {
+                lng: Number(coordinates[0]),
+                lat: Number(coordinates[1]),
+              },
+            );
+          }
+        });
+
+        return rows.map((school) => {
+          const geocoded = geocodedById.get(
+            String(school.id ?? school.nom_ecole),
+          );
+
+          return geocoded
+            ? {
+                ...school,
+                latitude: geocoded.lat,
+                longitude: geocoded.lng,
+              }
+            : school;
+        });
+      } catch (err) {
+        console.warn("Géocodage temporaire des écoles impossible", err);
+        return rows;
+      }
+    };
+
     const loadSchools = async () => {
       const { data, error: schoolsError } = await circuitSupabase
         .from("ecoles")
@@ -1541,8 +1645,11 @@ export default function CarteUnitesPage() {
         return;
       }
 
+      const loaded = (data ?? []) as SchoolRow[];
+      const withCoordinates = await geocodeMissingSchools(loaded);
+
       if (!cancelled) {
-        setSchools((data ?? []) as SchoolRow[]);
+        setSchools(withCoordinates);
       }
     };
 
@@ -2379,7 +2486,7 @@ export default function CarteUnitesPage() {
         .fleet-live-dot.is-error { background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.15); }
         .fleet-search { position:relative; flex:1 1 360px; max-width:520px; z-index:40; }
         .fleet-search input { width:100%; height:40px; box-sizing:border-box; border:1px solid #dbe2ea; border-radius:10px; background:#f8fafc; padding:0 38px 0 13px; font:inherit; font-size:13px; outline:none; }
-        .fleet-search-menu { position:absolute; top:46px; left:0; right:0; max-height:360px; overflow:auto; background:#fff; border:1px solid #dbe2ea; border-radius:12px; box-shadow:0 16px 40px rgba(15,23,42,.18); padding:6px; }
+        .fleet-search-menu { position:absolute; top:46px; left:0; right:0; max-height:min(520px,70vh); overflow:auto; background:#fff; border:1px solid #dbe2ea; border-radius:12px; box-shadow:0 16px 40px rgba(15,23,42,.18); padding:6px; }
         .fleet-search-option { width:100%; border:0; background:transparent; border-radius:9px; padding:9px 10px; display:flex; align-items:center; gap:10px; text-align:left; cursor:pointer; color:#0f172a; }
         .fleet-search-option:hover { background:#f1f5f9; }
         .fleet-search-option-unit { min-width:64px; font-size:13px; font-weight:950; }
@@ -2506,7 +2613,7 @@ export default function CarteUnitesPage() {
           </div>
         </div>
 
-        <div className="fleet-search">
+        <div className="fleet-search" ref={searchBoxRef}>
           <input
             value={searchInput}
             onFocus={() => setSearchOpen(true)}
@@ -2623,78 +2730,12 @@ export default function CarteUnitesPage() {
       </div>
 
       <div className="fleet-body">
-        <aside className={`fleet-sidebar ${sidebarOpen ? "" : "closed"}`}>
-          {!selectedVehicle ? (
-            <>
-              <div className="fleet-sidebar-head">
-                <div className="fleet-sidebar-count">
-                  {displayVehicles.length}
-                  <span>
-                    unité{displayVehicles.length > 1 ? "s" : ""}
-                  </span>
-                </div>
-              </div>
-
-              {schools.length === 0 && (
-                <div
-                  style={{
-                    padding: "7px 14px",
-                    borderBottom: "1px solid #e2e8f0",
-                    color: "#64748b",
-                    fontSize: 10,
-                  }}
-                >
-                  Repères écoles : aucune école enregistrée dans la table ecoles.
-                </div>
-              )}
-
-              <div className="fleet-list">
-                {displayVehicles.length === 0 ? (
-                  <div className="fleet-list-empty">
-                    Aucune unité ne correspond aux filtres.
-                  </div>
-                ) : (
-                  displayVehicles.map((vehicle) => (
-                    <button
-                      type="button"
-                      key={vehicle.key}
-                      className={`fleet-row ${
-                        selectedKey === vehicle.key ? "selected" : ""
-                      }`}
-                      onClick={() => selectVehicle(vehicle.key, true)}
-                    >
-                      <span
-                        className="fleet-company-dot"
-                        style={{ background: companyColor[vehicle.compagnie] }}
-                      />
-                      <span className="fleet-row-main">
-                        <span className="fleet-row-top">
-                          <span className="fleet-row-title">
-                            Unité {vehicle.unit}
-                          </span>
-                          {vehicle.batterySocPercent != null && (
-                            <span className="fleet-battery">
-                              🔋 {Math.round(vehicle.batterySocPercent)} %
-                            </span>
-                          )}
-                        </span>
-
-                        {vehicle.circuits.length > 0 && (
-                          <span className="fleet-row-circuit">
-                            Circuit {vehicle.circuits.join(", ")}
-                          </span>
-                        )}
-
-                        <span className="fleet-row-sub">
-                          {vehicle.address || "Adresse non disponible"}
-                        </span>
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </>
-          ) : (
+        <aside
+          className={`fleet-sidebar ${
+            selectedVehicle && sidebarOpen ? "" : "closed"
+          }`}
+        >
+          {selectedVehicle && (
             <div className="fleet-detail">
               <div className={historyOpen ? "fleet-live-detail-hidden" : ""}>
               <div className="fleet-detail-top">
@@ -2724,29 +2765,20 @@ export default function CarteUnitesPage() {
                     clearHistoryMap();
                     clearRoute();
 
+                    setSidebarOpen(false);
+
                     const map = mapRef.current;
                     if (map) {
                       map.resize();
 
                       window.requestAnimationFrame(() => {
-                        if (displayVehicles.length === 1) {
-                          const vehicle = displayVehicles[0];
-
-                          if (validCoordinate(vehicle)) {
-                            map.easeTo({
-                              center: [
-                                Number(vehicle.longitude),
-                                Number(vehicle.latitude),
-                              ],
-                              zoom: Math.max(map.getZoom(), 14),
-                              duration: 450,
-                            });
-                            return;
-                          }
-                        }
-
-                        fitVehicles(displayVehicles, true);
+                        fitVehicles(allDisplayVehicles, true);
                       });
+
+                      window.setTimeout(() => {
+                        map.resize();
+                        fitVehicles(allDisplayVehicles, true);
+                      }, 220);
                     }
                   }}
                 >
@@ -3092,15 +3124,19 @@ export default function CarteUnitesPage() {
           )}
         </aside>
 
-        <button
-          type="button"
-          className={`fleet-sidebar-toggle ${sidebarOpen ? "" : "closed"}`}
-          onClick={toggleSidebar}
-          title={sidebarOpen ? "Masquer la liste" : "Afficher la liste"}
-          aria-label={sidebarOpen ? "Masquer la liste" : "Afficher la liste"}
-        >
-          <span>{sidebarOpen ? "‹" : "›"}</span>
-        </button>
+        {selectedVehicle && (
+          <button
+            type="button"
+            className={`fleet-sidebar-toggle ${sidebarOpen ? "" : "closed"}`}
+            onClick={toggleSidebar}
+            title={sidebarOpen ? "Masquer le panneau" : "Afficher le panneau"}
+            aria-label={
+              sidebarOpen ? "Masquer le panneau" : "Afficher le panneau"
+            }
+          >
+            <span>{sidebarOpen ? "‹" : "›"}</span>
+          </button>
+        )}
 
         <div className="fleet-map-shell">
           <div ref={mapNode} className="fleet-map" />
