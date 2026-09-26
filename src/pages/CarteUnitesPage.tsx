@@ -185,6 +185,7 @@ function historyDistanceMeters(a: HistoryPoint, b: HistoryPoint) {
 function trimHistoryDeparture(points: HistoryPoint[]) {
   if (points.length < 2) return points;
 
+  // Début réel : coupe le temps mort avant que l'autobus quitte son point initial.
   const origin = points[0];
   let departureIndex = 0;
 
@@ -199,7 +200,22 @@ function trimHistoryDeparture(points: HistoryPoint[]) {
     }
   }
 
-  return points.slice(departureIndex);
+  // Fin réelle : coupe aussi le temps mort après l'arrivée au point final.
+  const destination = points[points.length - 1];
+  let arrivalIndex = points.length - 1;
+
+  for (let i = points.length - 2; i >= departureIndex; i -= 1) {
+    const point = points[i];
+    const distance = historyDistanceMeters(destination, point);
+    const speed = Number(point.speedKph ?? 0);
+
+    if (distance >= 75 && speed >= 3) {
+      arrivalIndex = Math.min(points.length - 1, i + 1);
+      break;
+    }
+  }
+
+  return points.slice(departureIndex, arrivalIndex + 1);
 }
 
 function detectHistoryStops(points: HistoryPoint[]) {
@@ -1500,6 +1516,28 @@ export default function CarteUnitesPage() {
     [historyStops, historyIndex],
   );
 
+  const historyCursorPercent =
+    historyTimelinePoints.length <= 1
+      ? 0
+      : (Math.min(historyIndex, historyTimelinePoints.length - 1) /
+          (historyTimelinePoints.length - 1)) *
+        100;
+
+  const activeHistoryStopTimes = useMemo(() => {
+    if (!activeHistoryStop || historyTimelinePoints.length === 0) return null;
+
+    const start = historyTimelinePoints[activeHistoryStop.startIndex];
+    const end = historyTimelinePoints[activeHistoryStop.endIndex];
+
+    if (!start || !end) return null;
+
+    return {
+      startTime: start.time,
+      endTime: end.time,
+      durationMinutes: activeHistoryStop.durationMinutes,
+    };
+  }, [activeHistoryStop, historyTimelinePoints]);
+
   useEffect(() => {
     if (historyTimelinePoints.length === 0) {
       setHistoryIndex(0);
@@ -1751,10 +1789,15 @@ export default function CarteUnitesPage() {
         .fleet-timeline { position:absolute; left:18px; right:18px; bottom:18px; z-index:8; padding:10px 14px; border:1px solid #bfdbfe; background:rgba(255,255,255,.96); border-radius:12px; box-shadow:0 8px 28px rgba(15,23,42,.18); backdrop-filter:blur(8px); }
         .fleet-timeline-top { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:6px; }
         .fleet-timeline-title { font-size:12px; font-weight:900; color:#0f172a; white-space:nowrap; }
-        .fleet-timeline input[type="range"] { width:100%; height:8px; border-radius:999px; appearance:none; -webkit-appearance:none; outline:none; cursor:pointer; }
-        .fleet-timeline input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:16px; height:16px; border-radius:999px; background:#fff; border:3px solid #2563eb; box-shadow:0 1px 4px rgba(15,23,42,.28); }
-        .fleet-timeline input[type="range"]::-moz-range-thumb { width:14px; height:14px; border-radius:999px; background:#fff; border:3px solid #2563eb; box-shadow:0 1px 4px rgba(15,23,42,.28); }
+        .fleet-timeline-track { position:relative; height:34px; display:flex; align-items:center; }
+        .fleet-timeline input[type="range"] { position:relative; z-index:2; width:100%; height:8px; margin:0; border-radius:999px; appearance:none; -webkit-appearance:none; outline:none; cursor:pointer; }
+        .fleet-timeline input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; border-radius:999px; background:#fff; border:3px solid #2563eb; box-shadow:0 1px 4px rgba(15,23,42,.28); }
+        .fleet-timeline input[type="range"]::-moz-range-thumb { width:12px; height:12px; border-radius:999px; background:#fff; border:3px solid #2563eb; box-shadow:0 1px 4px rgba(15,23,42,.28); }
+        .fleet-timeline-cursor { position:absolute; z-index:4; top:0; bottom:0; width:2px; background:#0f172a; border-radius:999px; transform:translateX(-1px); pointer-events:none; box-shadow:0 0 0 1px rgba(255,255,255,.75); }
+        .fleet-stop-boundary { position:absolute; z-index:3; top:5px; bottom:5px; width:1px; background:#d97706; pointer-events:none; opacity:.95; }
+        .fleet-stop-boundary::before { content:""; position:absolute; top:-2px; left:-2px; width:5px; height:5px; border-radius:999px; background:#d97706; }
         .fleet-timeline-point { min-width:210px; text-align:right; font-size:12px; line-height:1.35; color:#334155; }
+        .fleet-stop-detail { color:#b45309; font-weight:900; }
         .fleet-timeline-legend { margin-top:7px; display:flex; align-items:center; gap:12px; color:#64748b; font-size:10px; font-weight:800; }
         .fleet-timeline-legend span { display:inline-flex; align-items:center; gap:5px; }
         .fleet-timeline-swatch { width:16px; height:5px; border-radius:999px; display:inline-block; }
@@ -2267,30 +2310,74 @@ export default function CarteUnitesPage() {
                       {point.speedKph == null
                         ? "Vitesse —"
                         : `${Math.round(point.speedKph)} km/h`}
-                      {activeHistoryStop
-                        ? ` · Arrêt ${activeHistoryStop.durationMinutes} min`
-                        : ""}
+                      {activeHistoryStopTimes ? (
+                        <>
+                          {" · "}
+                          <span className="fleet-stop-detail">
+                            Arrêt {fmtTime(activeHistoryStopTimes.startTime)} →{" "}
+                            {fmtTime(activeHistoryStopTimes.endTime)} (
+                            {activeHistoryStopTimes.durationMinutes} min)
+                          </span>
+                        </>
+                      ) : null}
                       {point.address ? ` · ${point.address}` : ""}
                     </div>
                   );
                 })()}
               </div>
 
-              <input
-                type="range"
-                min={0}
-                max={Math.max(0, historyTimelinePoints.length - 1)}
-                step={1}
-                value={Math.min(
-                  historyIndex,
-                  historyTimelinePoints.length - 1,
-                )}
-                onChange={(event) =>
-                  setHistoryIndex(Number(event.target.value))
-                }
-                aria-label="Position dans l'historique du trajet"
-                style={{ background: historyTimelineGradient }}
-              />
+              <div className="fleet-timeline-track">
+                {historyStops.flatMap((stop, stopIndex) => {
+                  const maxIndex = Math.max(
+                    1,
+                    historyTimelinePoints.length - 1,
+                  );
+                  const startPercent =
+                    (stop.startIndex / maxIndex) * 100;
+                  const endPercent =
+                    (stop.endIndex / maxIndex) * 100;
+                  const startPoint =
+                    historyTimelinePoints[stop.startIndex];
+                  const endPoint =
+                    historyTimelinePoints[stop.endIndex];
+
+                  return [
+                    <span
+                      key={`stop-start-${stopIndex}`}
+                      className="fleet-stop-boundary"
+                      style={{ left: `${startPercent}%` }}
+                      title={`Début arrêt ${fmtTime(startPoint?.time ?? null)}`}
+                    />,
+                    <span
+                      key={`stop-end-${stopIndex}`}
+                      className="fleet-stop-boundary"
+                      style={{ left: `${endPercent}%` }}
+                      title={`Fin arrêt ${fmtTime(endPoint?.time ?? null)}`}
+                    />,
+                  ];
+                })}
+
+                <span
+                  className="fleet-timeline-cursor"
+                  style={{ left: `${historyCursorPercent}%` }}
+                />
+
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.max(0, historyTimelinePoints.length - 1)}
+                  step={1}
+                  value={Math.min(
+                    historyIndex,
+                    historyTimelinePoints.length - 1,
+                  )}
+                  onChange={(event) =>
+                    setHistoryIndex(Number(event.target.value))
+                  }
+                  aria-label="Position précise dans l'historique du trajet"
+                  style={{ background: historyTimelineGradient }}
+                />
+              </div>
 
               <div className="fleet-timeline-legend">
                 <span>
@@ -2306,6 +2393,17 @@ export default function CarteUnitesPage() {
                     style={{ background: "#f59e0b" }}
                   />
                   Arrêt de plus de 5 min
+                </span>
+                <span>
+                  <i
+                    className="fleet-timeline-swatch"
+                    style={{
+                      background: "#0f172a",
+                      width: 2,
+                      height: 12,
+                    }}
+                  />
+                  Position exacte du curseur
                 </span>
               </div>
             </div>
