@@ -79,6 +79,12 @@ type HistoryData = {
   };
 };
 
+type HistoryStop = {
+  startIndex: number;
+  endIndex: number;
+  durationMinutes: number;
+};
+
 const REFRESH_MS = 5000;
 const SOC_REFRESH_MS = 30000;
 const STALE_AFTER_SECONDS = 180;
@@ -161,6 +167,111 @@ function fmtDuration(seconds: number) {
   return remain ? `${hours} h ${remain} min` : `${hours} h`;
 }
 
+
+function historyDistanceMeters(a: HistoryPoint, b: HistoryPoint) {
+  const radius = 6371000;
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLng = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+
+  return radius * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function trimHistoryDeparture(points: HistoryPoint[]) {
+  if (points.length < 2) return points;
+
+  const origin = points[0];
+  let departureIndex = 0;
+
+  for (let i = 1; i < points.length; i += 1) {
+    const point = points[i];
+    const distance = historyDistanceMeters(origin, point);
+    const speed = Number(point.speedKph ?? 0);
+
+    if (distance >= 75 && speed >= 3) {
+      departureIndex = Math.max(0, i - 1);
+      break;
+    }
+  }
+
+  return points.slice(departureIndex);
+}
+
+function detectHistoryStops(points: HistoryPoint[]) {
+  const stops: HistoryStop[] = [];
+  const maxRadiusMeters = 75;
+  const minStopMs = 5 * 60 * 1000;
+  let i = 0;
+
+  while (i < points.length - 1) {
+    const anchor = points[i];
+    const anchorSpeed = Number(anchor.speedKph ?? 0);
+
+    if (anchorSpeed > 5) {
+      i += 1;
+      continue;
+    }
+
+    let j = i + 1;
+
+    while (j < points.length) {
+      const point = points[j];
+      const distance = historyDistanceMeters(anchor, point);
+      const speed = Number(point.speedKph ?? 0);
+
+      if (distance > maxRadiusMeters || speed > 8) break;
+      j += 1;
+    }
+
+    const endIndex = Math.max(i, j - 1);
+    const durationMs =
+      Date.parse(points[endIndex].time) - Date.parse(points[i].time);
+
+    if (durationMs >= minStopMs) {
+      stops.push({
+        startIndex: i,
+        endIndex,
+        durationMinutes: Math.max(5, Math.round(durationMs / 60000)),
+      });
+      i = Math.max(j, i + 1);
+    } else {
+      i += 1;
+    }
+  }
+
+  return stops;
+}
+
+function buildTimelineGradient(points: HistoryPoint[], stops: HistoryStop[]) {
+  if (points.length < 2 || stops.length === 0) {
+    return "linear-gradient(to right, #2563eb 0%, #2563eb 100%)";
+  }
+
+  const maxIndex = points.length - 1;
+  const parts: string[] = [];
+  let cursor = 0;
+
+  for (const stop of stops) {
+    const start = Math.max(0, Math.min(100, (stop.startIndex / maxIndex) * 100));
+    const end = Math.max(start, Math.min(100, (stop.endIndex / maxIndex) * 100));
+
+    parts.push(`#2563eb ${cursor}%`);
+    parts.push(`#2563eb ${start}%`);
+    parts.push(`#f59e0b ${start}%`);
+    parts.push(`#f59e0b ${end}%`);
+    cursor = end;
+  }
+
+  parts.push(`#2563eb ${cursor}%`);
+  parts.push("#2563eb 100%");
+
+  return `linear-gradient(to right, ${parts.join(", ")})`;
+}
 
 function validCoordinate(vehicle: Pick<DisplayVehicle, "latitude" | "longitude">) {
   const lat = Number(vehicle.latitude);
@@ -1174,7 +1285,26 @@ export default function CarteUnitesPage() {
     historyDate,
     historyEnd,
     historyStart,
-    selectedVehicle,
+    selectedVehicle?.compagnie,
+    selectedVehicle?.unit,
+    selectedVehicle?.vehicleId,
+  ]);
+
+  useEffect(() => {
+    if (!historyOpen || !selectedVehicle?.vehicleId || !historyDate) return;
+
+    const timer = window.setTimeout(() => {
+      void loadHistory();
+    }, 180);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    historyOpen,
+    historyDate,
+    historyStart,
+    historyEnd,
+    selectedVehicle?.vehicleId,
+    loadHistory,
   ]);
 
   const refreshSoc = useCallback(
@@ -1343,12 +1473,50 @@ export default function CarteUnitesPage() {
     return () => observer.disconnect();
   }, []);
 
+  const historyPoints = historyData?.points ?? [];
+
+  const historyTimelinePoints = useMemo(
+    () => trimHistoryDeparture(historyPoints),
+    [historyPoints],
+  );
+
+  const historyStops = useMemo(
+    () => detectHistoryStops(historyTimelinePoints),
+    [historyTimelinePoints],
+  );
+
+  const historyTimelineGradient = useMemo(
+    () => buildTimelineGradient(historyTimelinePoints, historyStops),
+    [historyTimelinePoints, historyStops],
+  );
+
+  const activeHistoryStop = useMemo(
+    () =>
+      historyStops.find(
+        (stop) =>
+          historyIndex >= stop.startIndex &&
+          historyIndex <= stop.endIndex,
+      ) ?? null,
+    [historyStops, historyIndex],
+  );
+
   useEffect(() => {
-    if (!historyData?.points?.length) return;
+    if (historyTimelinePoints.length === 0) {
+      setHistoryIndex(0);
+      return;
+    }
+
+    setHistoryIndex((current) =>
+      Math.min(current, historyTimelinePoints.length - 1),
+    );
+  }, [historyTimelinePoints.length]);
+
+  useEffect(() => {
+    if (!historyTimelinePoints.length) return;
 
     const point =
-      historyData.points[
-        Math.min(historyIndex, historyData.points.length - 1)
+      historyTimelinePoints[
+        Math.min(historyIndex, historyTimelinePoints.length - 1)
       ];
 
     if (!point) return;
@@ -1368,7 +1536,7 @@ export default function CarteUnitesPage() {
         coordinates: [point.longitude, point.latitude],
       },
     } as any);
-  }, [historyData, historyIndex]);
+  }, [historyTimelinePoints, historyIndex]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarOpen((open) => !open);
@@ -1510,8 +1678,6 @@ export default function CarteUnitesPage() {
     setHistoryIndex(0);
   }, []);
 
-  const historyPoints = historyData?.points ?? [];
-
   return (
     <div ref={pageRef} className="fleet-page">
       <style>{`
@@ -1585,8 +1751,13 @@ export default function CarteUnitesPage() {
         .fleet-timeline { position:absolute; left:18px; right:18px; bottom:18px; z-index:8; padding:10px 14px; border:1px solid #bfdbfe; background:rgba(255,255,255,.96); border-radius:12px; box-shadow:0 8px 28px rgba(15,23,42,.18); backdrop-filter:blur(8px); }
         .fleet-timeline-top { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:6px; }
         .fleet-timeline-title { font-size:12px; font-weight:900; color:#0f172a; white-space:nowrap; }
-        .fleet-timeline input[type="range"] { width:100%; accent-color:#2563eb; }
+        .fleet-timeline input[type="range"] { width:100%; height:8px; border-radius:999px; appearance:none; -webkit-appearance:none; outline:none; cursor:pointer; }
+        .fleet-timeline input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:16px; height:16px; border-radius:999px; background:#fff; border:3px solid #2563eb; box-shadow:0 1px 4px rgba(15,23,42,.28); }
+        .fleet-timeline input[type="range"]::-moz-range-thumb { width:14px; height:14px; border-radius:999px; background:#fff; border:3px solid #2563eb; box-shadow:0 1px 4px rgba(15,23,42,.28); }
         .fleet-timeline-point { min-width:210px; text-align:right; font-size:12px; line-height:1.35; color:#334155; }
+        .fleet-timeline-legend { margin-top:7px; display:flex; align-items:center; gap:12px; color:#64748b; font-size:10px; font-weight:800; }
+        .fleet-timeline-legend span { display:inline-flex; align-items:center; gap:5px; }
+        .fleet-timeline-swatch { width:16px; height:5px; border-radius:999px; display:inline-block; }
         .fleet-map-count.with-timeline { bottom:118px; }
         .fleet-map-shell { position:relative; flex:1 1 0; width:0; min-width:0; min-height:0; overflow:hidden; }
         .fleet-map { position:absolute; inset:0; width:100%; height:100%; }
@@ -1958,17 +2129,18 @@ export default function CarteUnitesPage() {
                     </button>
                   </div>
 
-                  <button
-                    type="button"
-                    className="fleet-btn"
-                    style={{ marginTop: 9 }}
-                    disabled={historyLoading}
-                    onClick={() => void loadHistory()}
-                  >
-                    {historyLoading
-                      ? "Chargement…"
-                      : "Afficher le trajet"}
-                  </button>
+                  {historyLoading && (
+                    <div
+                      style={{
+                        marginTop: 9,
+                        color: "#64748b",
+                        fontSize: 12,
+                        fontWeight: 800,
+                      }}
+                    >
+                      Chargement du trajet…
+                    </div>
+                  )}
 
                   {historyError && (
                     <div className="fleet-error">{historyError}</div>
@@ -2069,19 +2241,22 @@ export default function CarteUnitesPage() {
         <div className="fleet-map-shell">
           <div ref={mapNode} className="fleet-map" />
 
-          {historyPoints.length > 0 && (
+          {historyTimelinePoints.length > 0 && (
             <div className="fleet-timeline">
               <div className="fleet-timeline-top">
                 <div className="fleet-timeline-title">
-                  Historique · unité {selectedVehicle?.unit ?? ""}
+                  Historique · unité {selectedVehicle?.unit ?? ""} ·{" "}
+                  {fmtTime(historyTimelinePoints[0].time)}–{fmtTime(
+                    historyTimelinePoints[historyTimelinePoints.length - 1].time,
+                  )}
                 </div>
 
                 {(() => {
                   const point =
-                    historyPoints[
+                    historyTimelinePoints[
                       Math.min(
                         historyIndex,
-                        historyPoints.length - 1,
+                        historyTimelinePoints.length - 1,
                       )
                     ];
 
@@ -2092,6 +2267,9 @@ export default function CarteUnitesPage() {
                       {point.speedKph == null
                         ? "Vitesse —"
                         : `${Math.round(point.speedKph)} km/h`}
+                      {activeHistoryStop
+                        ? ` · Arrêt ${activeHistoryStop.durationMinutes} min`
+                        : ""}
                       {point.address ? ` · ${point.address}` : ""}
                     </div>
                   );
@@ -2101,23 +2279,41 @@ export default function CarteUnitesPage() {
               <input
                 type="range"
                 min={0}
-                max={Math.max(0, historyPoints.length - 1)}
+                max={Math.max(0, historyTimelinePoints.length - 1)}
                 step={1}
                 value={Math.min(
                   historyIndex,
-                  historyPoints.length - 1,
+                  historyTimelinePoints.length - 1,
                 )}
                 onChange={(event) =>
                   setHistoryIndex(Number(event.target.value))
                 }
                 aria-label="Position dans l'historique du trajet"
+                style={{ background: historyTimelineGradient }}
               />
+
+              <div className="fleet-timeline-legend">
+                <span>
+                  <i
+                    className="fleet-timeline-swatch"
+                    style={{ background: "#2563eb" }}
+                  />
+                  Déplacement
+                </span>
+                <span>
+                  <i
+                    className="fleet-timeline-swatch"
+                    style={{ background: "#f59e0b" }}
+                  />
+                  Arrêt de plus de 5 min
+                </span>
+              </div>
             </div>
           )}
 
           <div
             className={`fleet-map-count ${
-              historyPoints.length ? "with-timeline" : ""
+              historyTimelinePoints.length ? "with-timeline" : ""
             }`}
           >
             {loading
