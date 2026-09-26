@@ -574,6 +574,8 @@ export default function CarteUnitesPage() {
   const [circuits, setCircuits] = useState<CircuitRow[]>([]);
   const [filter, setFilter] = useState<Filter>("ALL");
   const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -715,6 +717,27 @@ export default function CarteUnitesPage() {
         }),
       );
   }, [vehicles, circuitsByVehicle]);
+
+  const searchSuggestions = useMemo(() => {
+    const q = normalizeText(searchInput);
+    if (!q) return allDisplayVehicles.slice(0, 12);
+
+    return allDisplayVehicles
+      .filter((vehicle) => {
+        if (filter !== "ALL" && vehicle.compagnie !== filter) return false;
+
+        return (
+          normalizeText(vehicle.unit).includes(q) ||
+          vehicle.circuits.some((circuit) =>
+            normalizeText(circuit).includes(q),
+          ) ||
+          vehicle.conducteurs.some((name) =>
+            normalizeText(name).includes(q),
+          )
+        );
+      })
+      .slice(0, 12);
+  }, [allDisplayVehicles, filter, searchInput]);
 
   const displayVehicles = useMemo(() => {
     const q = normalizeText(search);
@@ -1114,15 +1137,15 @@ export default function CarteUnitesPage() {
             ["linear"],
             ["zoom"],
             7,
-            7,
+            8,
             12,
-            9,
-            16,
             11,
+            16,
+            13,
           ],
           "circle-color": ["get", "color"],
           "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 2,
+          "circle-stroke-width": 3,
           "circle-opacity": ["get", "opacity"],
         },
       });
@@ -1139,42 +1162,27 @@ export default function CarteUnitesPage() {
             ["linear"],
             ["zoom"],
             7,
-            8,
-            12,
-            9,
-            16,
             10,
+            12,
+            11,
+            16,
+            12,
           ],
           "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-          "text-anchor": "center",
+          "text-anchor": "top",
           "text-offset": [
             "case",
             ["==", ["get", "status"], "MOVING"],
-            ["literal", [0, 1.65]],
-            ["literal", [0, 0]],
+            ["literal", [0, 1.75]],
+            ["literal", [0, 1.55]],
           ],
           "text-allow-overlap": true,
           "text-ignore-placement": true,
         },
         paint: {
-          "text-color": [
-            "case",
-            ["==", ["get", "status"], "MOVING"],
-            ["get", "color"],
-            "#ffffff",
-          ],
-          "text-halo-color": [
-            "case",
-            ["==", ["get", "status"], "MOVING"],
-            "#ffffff",
-            "rgba(255,255,255,0)",
-          ],
-          "text-halo-width": [
-            "case",
-            ["==", ["get", "status"], "MOVING"],
-            1.5,
-            0,
-          ],
+          "text-color": "#0f172a",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 3,
         },
       });
 
@@ -1194,11 +1202,11 @@ export default function CarteUnitesPage() {
             ["linear"],
             ["zoom"],
             7,
-            17,
+            18,
             12,
-            21,
+            22,
             16,
-            24,
+            26,
           ],
           "text-rotate": ["get", "heading"],
           "text-rotation-alignment": "map",
@@ -2098,6 +2106,50 @@ export default function CarteUnitesPage() {
     window.setTimeout(() => mapRef.current?.resize(), 220);
   }, []);
 
+  const commitVehicleSearch = useCallback(
+    (vehicle: DisplayVehicle | null) => {
+      if (!vehicle) return;
+
+      manualSearchOverrideRef.current = false;
+      lastAutoFollowSearchRef.current = "";
+      setSearchInput(vehicle.unit);
+      setSearch(vehicle.unit);
+      setSearchOpen(false);
+    },
+    [],
+  );
+
+  const commitSearchInput = useCallback(() => {
+    const q = normalizeText(searchInput);
+
+    if (!q) {
+      manualSearchOverrideRef.current = false;
+      lastAutoFollowSearchRef.current = "";
+      setSearch("");
+      setSearchOpen(false);
+      return;
+    }
+
+    const exact =
+      searchSuggestions.find(
+        (vehicle) => normalizeText(vehicle.unit) === q,
+      ) ??
+      searchSuggestions.find((vehicle) =>
+        vehicle.circuits.some(
+          (circuit) => normalizeText(circuit) === q,
+        ),
+      ) ??
+      (searchSuggestions.length === 1 ? searchSuggestions[0] : null);
+
+    if (exact) {
+      commitVehicleSearch(exact);
+      return;
+    }
+
+    // S'il y a plusieurs résultats, on laisse le menu ouvert pour choisir.
+    setSearchOpen(true);
+  }, [commitVehicleSearch, searchInput, searchSuggestions]);
+
   const handleCenter = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -2325,8 +2377,14 @@ export default function CarteUnitesPage() {
         .fleet-status { margin-top:5px; display:flex; align-items:center; gap:7px; color:#64748b; font-size:12px; }
         .fleet-live-dot { width:8px; height:8px; border-radius:999px; background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.15); }
         .fleet-live-dot.is-error { background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.15); }
-        .fleet-search { position:relative; flex:1 1 360px; max-width:520px; }
+        .fleet-search { position:relative; flex:1 1 360px; max-width:520px; z-index:40; }
         .fleet-search input { width:100%; height:40px; box-sizing:border-box; border:1px solid #dbe2ea; border-radius:10px; background:#f8fafc; padding:0 38px 0 13px; font:inherit; font-size:13px; outline:none; }
+        .fleet-search-menu { position:absolute; top:46px; left:0; right:0; max-height:360px; overflow:auto; background:#fff; border:1px solid #dbe2ea; border-radius:12px; box-shadow:0 16px 40px rgba(15,23,42,.18); padding:6px; }
+        .fleet-search-option { width:100%; border:0; background:transparent; border-radius:9px; padding:9px 10px; display:flex; align-items:center; gap:10px; text-align:left; cursor:pointer; color:#0f172a; }
+        .fleet-search-option:hover { background:#f1f5f9; }
+        .fleet-search-option-unit { min-width:64px; font-size:13px; font-weight:950; }
+        .fleet-search-option-meta { min-width:0; color:#64748b; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .fleet-search-empty { padding:12px; color:#64748b; font-size:12px; text-align:center; }
         .fleet-search input:focus { background:#fff; border-color:#93c5fd; box-shadow:0 0 0 3px rgba(37,99,235,.10); }
         .fleet-search-clear { position:absolute; right:7px; top:50%; transform:translateY(-50%); border:0; background:transparent; width:28px; height:28px; border-radius:7px; color:#64748b; cursor:pointer; font-size:17px; }
         .fleet-search-clear:hover { background:#e2e8f0; color:#0f172a; }
@@ -2375,7 +2433,11 @@ export default function CarteUnitesPage() {
         .fleet-route-box strong { display:block; font-size:17px; }
         .fleet-route-box div { margin-top:3px; color:#475569; font-size:12px; }
         .fleet-route-help { margin-top:12px; padding:9px 10px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:10px; color:#64748b; font-size:11px; line-height:1.4; }
-        .fleet-history { margin-top:14px; border-top:1px solid #e2e8f0; padding-top:14px; }
+        .fleet-live-detail-hidden { display:none; }
+        .fleet-history-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid #e2e8f0; }
+        .fleet-history-head-unit { font-size:19px; font-weight:950; }
+        .fleet-history-head-meta { margin-top:3px; color:#64748b; font-size:11px; font-weight:750; }
+        .fleet-history { margin-top:0; border-top:0; padding-top:0; }
         .fleet-history-controls { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
         .fleet-history-controls .full { grid-column:1 / -1; }
         .fleet-history-controls label { display:grid; gap:4px; color:#64748b; font-size:10px; font-weight:900; text-transform:uppercase; }
@@ -2446,28 +2508,79 @@ export default function CarteUnitesPage() {
 
         <div className="fleet-search">
           <input
-            value={search}
+            value={searchInput}
+            onFocus={() => setSearchOpen(true)}
             onChange={(event) => {
-              manualSearchOverrideRef.current = false;
-              lastAutoFollowSearchRef.current = "";
-              setSearch(event.target.value);
+              setSearchInput(event.target.value);
+              setSearchOpen(true);
             }}
-            placeholder="Rechercher unité, circuit ou conducteur…"
-            aria-label="Rechercher unité, circuit ou conducteur"
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitSearchInput();
+              } else if (event.key === "Escape") {
+                setSearchOpen(false);
+              }
+            }}
+            placeholder="Choisir une unité…"
+            aria-label="Choisir une unité"
+            autoComplete="off"
           />
-          {search && (
+
+          {searchInput && (
             <button
               type="button"
               className="fleet-search-clear"
               onClick={() => {
                 manualSearchOverrideRef.current = false;
                 lastAutoFollowSearchRef.current = "";
+                setSearchInput("");
                 setSearch("");
+                setSearchOpen(false);
               }}
               aria-label="Effacer la recherche"
             >
               ×
             </button>
+          )}
+
+          {searchOpen && (
+            <div className="fleet-search-menu">
+              {searchSuggestions.length === 0 ? (
+                <div className="fleet-search-empty">
+                  Aucune unité trouvée.
+                </div>
+              ) : (
+                searchSuggestions.map((vehicle) => (
+                  <button
+                    key={vehicle.key}
+                    type="button"
+                    className="fleet-search-option"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => commitVehicleSearch(vehicle)}
+                  >
+                    <span
+                      className="fleet-company-dot"
+                      style={{
+                        background: companyColor[vehicle.compagnie],
+                      }}
+                    />
+                    <span className="fleet-search-option-unit">
+                      {vehicle.unit}
+                    </span>
+                    <span className="fleet-search-option-meta">
+                      {vehicle.compagnie}
+                      {vehicle.circuits.length
+                        ? ` · Circuit ${vehicle.circuits.join(", ")}`
+                        : ""}
+                      {vehicle.conducteurs.length
+                        ? ` · ${vehicle.conducteurs.join(", ")}`
+                        : ""}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
           )}
         </div>
 
@@ -2522,6 +2635,19 @@ export default function CarteUnitesPage() {
                 </div>
               </div>
 
+              {schools.length === 0 && (
+                <div
+                  style={{
+                    padding: "7px 14px",
+                    borderBottom: "1px solid #e2e8f0",
+                    color: "#64748b",
+                    fontSize: 10,
+                  }}
+                >
+                  Repères écoles : aucune école enregistrée dans la table ecoles.
+                </div>
+              )}
+
               <div className="fleet-list">
                 {displayVehicles.length === 0 ? (
                   <div className="fleet-list-empty">
@@ -2570,6 +2696,7 @@ export default function CarteUnitesPage() {
             </>
           ) : (
             <div className="fleet-detail">
+              <div className={historyOpen ? "fleet-live-detail-hidden" : ""}>
               <div className="fleet-detail-top">
                 <div>
                   <div className="fleet-detail-unit">
@@ -2590,6 +2717,9 @@ export default function CarteUnitesPage() {
                     manualSearchOverrideRef.current = true;
                     setSelectedKey(null);
                     setFollowKey(null);
+                    setSearch("");
+                    setSearchInput("");
+                    setSearchOpen(false);
                     setHistoryOpen(false);
                     clearHistoryMap();
                     clearRoute();
@@ -2737,6 +2867,32 @@ export default function CarteUnitesPage() {
                   {historyOpen ? "Fermer historique" : "Historique trajet"}
                 </button>
               </div>
+
+              </div>
+
+              {historyOpen && (
+                <div className="fleet-history-head">
+                  <div>
+                    <div className="fleet-history-head-unit">
+                      Unité {selectedVehicle.unit}
+                    </div>
+                    <div className="fleet-history-head-meta">
+                      {selectedVehicle.compagnie}
+                      {selectedVehicle.circuits.length
+                        ? ` · Circuit ${selectedVehicle.circuits.join(", ")}`
+                        : ""}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="fleet-btn"
+                    onClick={toggleHistory}
+                  >
+                    Fermer historique
+                  </button>
+                </div>
+              )}
 
               {historyOpen && (
                 <div className="fleet-history">
@@ -2888,12 +3044,6 @@ export default function CarteUnitesPage() {
                           </strong>
                         </div>
 
-                        <div>
-                          <span>Points GPS</span>
-                          <strong>
-                            {historyData.summary.pointCount}
-                          </strong>
-                        </div>
                       </div>
 
                     </>
