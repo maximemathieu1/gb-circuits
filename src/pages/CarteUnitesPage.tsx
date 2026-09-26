@@ -1510,6 +1510,8 @@ export default function CarteUnitesPage() {
     setHistoryIndex(0);
   }, []);
 
+  const historyPoints = historyData?.points ?? [];
+
   return (
     <div ref={pageRef} className="fleet-page">
       <style>{`
@@ -2067,7 +2069,7 @@ export default function CarteUnitesPage() {
         <div className="fleet-map-shell">
           <div ref={mapNode} className="fleet-map" />
 
-          {historyData?.points?.length > 0 && (
+          {historyPoints.length > 0 && (
             <div className="fleet-timeline">
               <div className="fleet-timeline-top">
                 <div className="fleet-timeline-title">
@@ -2076,10 +2078,10 @@ export default function CarteUnitesPage() {
 
                 {(() => {
                   const point =
-                    historyData.points[
+                    historyPoints[
                       Math.min(
                         historyIndex,
-                        historyData.points.length - 1,
+                        historyPoints.length - 1,
                       )
                     ];
 
@@ -2099,11 +2101,11 @@ export default function CarteUnitesPage() {
               <input
                 type="range"
                 min={0}
-                max={Math.max(0, historyData.points.length - 1)}
+                max={Math.max(0, historyPoints.length - 1)}
                 step={1}
                 value={Math.min(
                   historyIndex,
-                  historyData.points.length - 1,
+                  historyPoints.length - 1,
                 )}
                 onChange={(event) =>
                   setHistoryIndex(Number(event.target.value))
@@ -2115,7 +2117,7 @@ export default function CarteUnitesPage() {
 
           <div
             className={`fleet-map-count ${
-              historyData?.points?.length ? "with-timeline" : ""
+              historyPoints.length ? "with-timeline" : ""
             }`}
           >
             {loading
