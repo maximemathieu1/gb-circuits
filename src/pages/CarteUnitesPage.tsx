@@ -54,6 +54,31 @@ type EtaInfo = {
   arrivalAt: string;
 };
 
+type HistoryPoint = {
+  time: string;
+  latitude: number;
+  longitude: number;
+  headingDegrees: number | null;
+  speedKph: number | null;
+  address: string | null;
+};
+
+type HistoryData = {
+  vehicleId: string;
+  vehicleName: string | null;
+  unit: string;
+  compagnie: string;
+  startTime: string;
+  endTime: string;
+  points: HistoryPoint[];
+  summary: {
+    pointCount: number;
+    distanceKm: number;
+    maxSpeedKph: number | null;
+    movingMinutes: number;
+  };
+};
+
 const REFRESH_MS = 5000;
 const SOC_REFRESH_MS = 30000;
 const STALE_AFTER_SECONDS = 180;
@@ -69,6 +94,10 @@ const ROUTE_SOURCE_ID = "fleet-route-source";
 const ROUTE_LAYER_ID = "fleet-route-layer";
 const DEST_SOURCE_ID = "fleet-destination-source";
 const DEST_LAYER_ID = "fleet-destination-layer";
+const HISTORY_SOURCE_ID = "fleet-history-source";
+const HISTORY_LAYER_ID = "fleet-history-layer";
+const HISTORY_POINT_SOURCE_ID = "fleet-history-point-source";
+const HISTORY_POINT_LAYER_ID = "fleet-history-point-layer";
 
 const VIEW_STORAGE_KEY = "gb-circuits-fleet-view-v2";
 
@@ -136,6 +165,30 @@ function fmtDuration(seconds: number) {
 function validCoordinate(vehicle: Pick<DisplayVehicle, "latitude" | "longitude">) {
   const lat = Number(vehicle.latitude);
   const lng = Number(vehicle.longitude);
+  const toggleHistory = useCallback(() => {
+    if (!selectedVehicle) return;
+
+    if (historyOpen) {
+      setHistoryOpen(false);
+      clearHistoryMap();
+      return;
+    }
+
+    setFollowKey(null);
+    clearRoute();
+    setHistoryStart("06:00");
+    setHistoryEnd("18:00");
+    setHistoryOpen(true);
+  }, [clearHistoryMap, clearRoute, historyOpen, selectedVehicle]);
+
+  const handleHistoryDateChange = useCallback((value: string) => {
+    setHistoryDate(value);
+    setHistoryStart("06:00");
+    setHistoryEnd("18:00");
+    setHistoryData(null);
+    setHistoryIndex(0);
+  }, []);
+
   return (
     Number.isFinite(lat) &&
     Number.isFinite(lng) &&
@@ -228,6 +281,7 @@ export default function CarteUnitesPage() {
   const destinationRef = useRef<Destination | null>(null);
   const routeAbortRef = useRef<AbortController | null>(null);
   const routeRequestIdRef = useRef(0);
+  const searchWasActiveRef = useRef(false);
   const socBusyRef = useRef(false);
   const lastSocRefreshRef = useRef(0);
 
@@ -247,6 +301,20 @@ export default function CarteUnitesPage() {
   const [etaLoading, setEtaLoading] = useState(false);
   const [etaError, setEtaError] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyDate, setHistoryDate] = useState(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  });
+  const [historyStart, setHistoryStart] = useState("06:00");
+  const [historyEnd, setHistoryEnd] = useState("18:00");
+  const [historyData, setHistoryData] = useState<HistoryData | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [historyIndex, setHistoryIndex] = useState(0);
 
   useEffect(() => {
     selectedKeyRef.current = selectedKey;
@@ -377,10 +445,11 @@ export default function CarteUnitesPage() {
   }, [allDisplayVehicles, selectedKey]);
 
   const mapVehicles = useMemo(() => {
+    if (historyOpen && selectedVehicle) return [selectedVehicle];
     if (!followKey) return displayVehicles;
     const followed = allDisplayVehicles.find((vehicle) => vehicle.key === followKey);
     return followed ? [followed] : [];
-  }, [displayVehicles, allDisplayVehicles, followKey]);
+  }, [displayVehicles, allDisplayVehicles, followKey, historyOpen, selectedVehicle]);
 
   const fitVehicles = useCallback((items: DisplayVehicle[], animate = true) => {
     const map = mapRef.current;
@@ -826,6 +895,43 @@ export default function CarteUnitesPage() {
         },
       });
 
+      map.addSource(HISTORY_SOURCE_ID, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      map.addLayer({
+        id: HISTORY_LAYER_ID,
+        type: "line",
+        source: HISTORY_SOURCE_ID,
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": "#7c3aed",
+          "line-width": 5,
+          "line-opacity": 0.8,
+        },
+      });
+
+      map.addSource(HISTORY_POINT_SOURCE_ID, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      map.addLayer({
+        id: HISTORY_POINT_LAYER_ID,
+        type: "circle",
+        source: HISTORY_POINT_SOURCE_ID,
+        paint: {
+          "circle-radius": 8,
+          "circle-color": "#7c3aed",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 3,
+        },
+      });
+
       syncMapData(latestDisplayRef.current);
 
       if (
@@ -963,6 +1069,137 @@ export default function CarteUnitesPage() {
       cancelled = true;
     };
   }, []);
+
+  const clearHistoryMap = useCallback(() => {
+    setHistoryData(null);
+    setHistoryIndex(0);
+    setHistoryError("");
+
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+
+    const lineSource = map.getSource(HISTORY_SOURCE_ID) as
+      | mapboxgl.GeoJSONSource
+      | undefined;
+
+    lineSource?.setData({
+      type: "FeatureCollection",
+      features: [],
+    } as any);
+
+    const pointSource = map.getSource(HISTORY_POINT_SOURCE_ID) as
+      | mapboxgl.GeoJSONSource
+      | undefined;
+
+    pointSource?.setData({
+      type: "FeatureCollection",
+      features: [],
+    } as any);
+  }, []);
+
+  const loadHistory = useCallback(async () => {
+    if (!selectedVehicle?.vehicleId || !historyDate) return;
+
+    setHistoryLoading(true);
+    setHistoryError("");
+
+    try {
+      const startLocal = new Date(`${historyDate}T${historyStart}:00`);
+      const endLocal = new Date(`${historyDate}T${historyEnd}:00`);
+
+      if (
+        Number.isNaN(startLocal.getTime()) ||
+        Number.isNaN(endLocal.getTime()) ||
+        endLocal <= startLocal
+      ) {
+        throw new Error("La plage horaire est invalide.");
+      }
+
+      const { data, error: historyFunctionError } =
+        await circuitSupabase.functions.invoke("circuit-samsara-live", {
+          body: {
+            mode: "history",
+            compagnie: companyFullName(selectedVehicle.compagnie),
+            vehicleId: selectedVehicle.vehicleId,
+            unit: selectedVehicle.unit,
+            startTime: startLocal.toISOString(),
+            endTime: endLocal.toISOString(),
+          },
+        });
+
+      if (historyFunctionError) throw historyFunctionError;
+      if (data?.ok === false) {
+        throw new Error(data?.error || "Historique Samsara impossible.");
+      }
+
+      const history = data?.history as HistoryData;
+      const points = Array.isArray(history?.points) ? history.points : [];
+
+      setHistoryData(history);
+      setHistoryIndex(0);
+
+      const map = mapRef.current;
+      if (!map || !mapReadyRef.current) return;
+
+      const lineSource = map.getSource(HISTORY_SOURCE_ID) as
+        | mapboxgl.GeoJSONSource
+        | undefined;
+
+      lineSource?.setData({
+        type: "Feature",
+        properties: {},
+        geometry: {
+          type: "LineString",
+          coordinates: points.map((point) => [
+            point.longitude,
+            point.latitude,
+          ]),
+        },
+      } as any);
+
+      if (points.length > 0) {
+        const first = points[0];
+        const pointSource = map.getSource(HISTORY_POINT_SOURCE_ID) as
+          | mapboxgl.GeoJSONSource
+          | undefined;
+
+        pointSource?.setData({
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "Point",
+            coordinates: [first.longitude, first.latitude],
+          },
+        } as any);
+
+        const bounds = new mapboxgl.LngLatBounds();
+        points.forEach((point) => {
+          bounds.extend([point.longitude, point.latitude]);
+        });
+
+        if (!bounds.isEmpty()) {
+          map.fitBounds(bounds, {
+            padding: { top: 60, right: 60, bottom: 120, left: 60 },
+            maxZoom: 15,
+            duration: 600,
+          });
+        }
+      }
+    } catch (err: any) {
+      setHistoryError(
+        err?.message || "Impossible de charger l’historique du trajet.",
+      );
+      clearHistoryMap();
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [
+    clearHistoryMap,
+    historyDate,
+    historyEnd,
+    historyStart,
+    selectedVehicle,
+  ]);
 
   const refreshSoc = useCallback(
     async (baseVehicles: Record<string, LiveVehicle>, force = false) => {
@@ -1130,6 +1367,33 @@ export default function CarteUnitesPage() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (!historyData?.points?.length) return;
+
+    const point =
+      historyData.points[
+        Math.min(historyIndex, historyData.points.length - 1)
+      ];
+
+    if (!point) return;
+
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+
+    const pointSource = map.getSource(HISTORY_POINT_SOURCE_ID) as
+      | mapboxgl.GeoJSONSource
+      | undefined;
+
+    pointSource?.setData({
+      type: "Feature",
+      properties: {},
+      geometry: {
+        type: "Point",
+        coordinates: [point.longitude, point.latitude],
+      },
+    } as any);
+  }, [historyData, historyIndex]);
+
   const toggleSidebar = useCallback(() => {
     setSidebarOpen((open) => !open);
 
@@ -1182,7 +1446,20 @@ export default function CarteUnitesPage() {
 
   useEffect(() => {
     const q = normalizeText(search);
-    if (!q) return;
+
+    if (!q) {
+      if (searchWasActiveRef.current) {
+        setFollowKey(null);
+        clearRoute();
+        setHistoryOpen(false);
+        clearHistoryMap();
+      }
+
+      searchWasActiveRef.current = false;
+      return;
+    }
+
+    searchWasActiveRef.current = true;
 
     const exactMatches = displayVehicles.filter((vehicle) => {
       return (
@@ -1205,6 +1482,8 @@ export default function CarteUnitesPage() {
 
     if (followKey !== target.key) {
       clearRoute();
+      setHistoryOpen(false);
+      clearHistoryMap();
       setFollowKey(target.key);
     }
 
@@ -1215,7 +1494,13 @@ export default function CarteUnitesPage() {
         duration: 500,
       });
     }
-  }, [search, displayVehicles, followKey, clearRoute]);
+  }, [
+    search,
+    displayVehicles,
+    followKey,
+    clearRoute,
+    clearHistoryMap,
+  ]);
 
 
 
@@ -1280,6 +1565,18 @@ export default function CarteUnitesPage() {
         .fleet-route-box strong { display:block; font-size:17px; }
         .fleet-route-box div { margin-top:3px; color:#475569; font-size:12px; }
         .fleet-route-help { margin-top:12px; padding:9px 10px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:10px; color:#64748b; font-size:11px; line-height:1.4; }
+        .fleet-history { margin-top:14px; border-top:1px solid #e2e8f0; padding-top:14px; }
+        .fleet-history-controls { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        .fleet-history-controls .full { grid-column:1 / -1; }
+        .fleet-history-controls label { display:grid; gap:4px; color:#64748b; font-size:10px; font-weight:900; text-transform:uppercase; }
+        .fleet-history-controls input { height:36px; border:1px solid #dbe2ea; border-radius:8px; padding:0 9px; font:inherit; font-size:12px; }
+        .fleet-history-summary { margin-top:10px; display:grid; grid-template-columns:repeat(2,1fr); gap:7px; }
+        .fleet-history-summary div { border:1px solid #e2e8f0; background:#f8fafc; border-radius:9px; padding:8px; }
+        .fleet-history-summary span { display:block; color:#64748b; font-size:9px; font-weight:900; text-transform:uppercase; }
+        .fleet-history-summary strong { display:block; margin-top:3px; font-size:13px; }
+        .fleet-timeline { margin-top:12px; padding:10px; border:1px solid #ddd6fe; background:#f5f3ff; border-radius:11px; }
+        .fleet-timeline input[type="range"] { width:100%; }
+        .fleet-timeline-point { margin-top:7px; font-size:12px; line-height:1.45; }
         .fleet-map-shell { position:relative; flex:1 1 0; width:0; min-width:0; min-height:0; overflow:hidden; }
         .fleet-map { position:absolute; inset:0; width:100%; height:100%; }
         .fleet-map-count { position:absolute; left:12px; bottom:12px; z-index:5; padding:8px 11px; border-radius:10px; background:rgba(15,23,42,.88); color:#fff; font-size:12px; font-weight:800; box-shadow:0 5px 18px rgba(15,23,42,.18); }
@@ -1567,7 +1864,161 @@ export default function CarteUnitesPage() {
                     ? "Arrêter le suivi"
                     : "Suivre l’unité"}
                 </button>
+
+                <button
+                  type="button"
+                  className={`fleet-btn ${historyOpen ? "active" : ""}`}
+                  onClick={toggleHistory}
+                >
+                  {historyOpen ? "Fermer historique" : "Historique trajet"}
+                </button>
               </div>
+
+              {historyOpen && (
+                <div className="fleet-history">
+                  <div className="fleet-section-title">
+                    Historique du trajet
+                  </div>
+
+                  <div className="fleet-history-controls">
+                    <label className="full">
+                      Journée
+                      <input
+                        type="date"
+                        value={historyDate}
+                        onChange={(event) =>
+                          handleHistoryDateChange(event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Heure début
+                      <input
+                        type="time"
+                        value={historyStart}
+                        onChange={(event) =>
+                          setHistoryStart(event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Heure fin
+                      <input
+                        type="time"
+                        value={historyEnd}
+                        onChange={(event) =>
+                          setHistoryEnd(event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="fleet-btn"
+                    style={{ marginTop: 9 }}
+                    disabled={historyLoading}
+                    onClick={() => void loadHistory()}
+                  >
+                    {historyLoading
+                      ? "Chargement…"
+                      : "Afficher le trajet"}
+                  </button>
+
+                  {historyError && (
+                    <div className="fleet-error">{historyError}</div>
+                  )}
+
+                  {historyData && (
+                    <>
+                      <div className="fleet-history-summary">
+                        <div>
+                          <span>Distance</span>
+                          <strong>
+                            {historyData.summary.distanceKm.toFixed(1)} km
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>Vitesse max</span>
+                          <strong>
+                            {historyData.summary.maxSpeedKph == null
+                              ? "—"
+                              : `${Math.round(
+                                  historyData.summary.maxSpeedKph,
+                                )} km/h`}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>Temps en mouvement</span>
+                          <strong>
+                            {historyData.summary.movingMinutes} min
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>Points GPS</span>
+                          <strong>
+                            {historyData.summary.pointCount}
+                          </strong>
+                        </div>
+                      </div>
+
+                      {historyData.points.length > 0 && (
+                        <div className="fleet-timeline">
+                          <input
+                            type="range"
+                            min={0}
+                            max={Math.max(
+                              0,
+                              historyData.points.length - 1,
+                            )}
+                            step={1}
+                            value={Math.min(
+                              historyIndex,
+                              historyData.points.length - 1,
+                            )}
+                            onChange={(event) =>
+                              setHistoryIndex(
+                                Number(event.target.value),
+                              )
+                            }
+                          />
+
+                          {(() => {
+                            const point =
+                              historyData.points[
+                                Math.min(
+                                  historyIndex,
+                                  historyData.points.length - 1,
+                                )
+                              ];
+
+                            return (
+                              <div className="fleet-timeline-point">
+                                <strong>{fmtTime(point.time)}</strong>
+                                <br />
+                                {point.speedKph == null
+                                  ? "Vitesse —"
+                                  : `${Math.round(point.speedKph)} km/h`}
+                                {point.address ? (
+                                  <>
+                                    <br />
+                                    {point.address}
+                                  </>
+                                ) : null}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
 
               {followKey === selectedVehicle.key && (
                 <>
