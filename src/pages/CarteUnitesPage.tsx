@@ -27,6 +27,7 @@ type CircuitRow = {
   unite: string;
   compagnie: string;
   nom_conducteur: string | null;
+  telephone: string | null;
 };
 
 type DisplayVehicle = LiveVehicle & {
@@ -34,6 +35,10 @@ type DisplayVehicle = LiveVehicle & {
   key: string;
   circuits: string[];
   conducteurs: string[];
+  contactsConducteur: Array<{
+    nom: string;
+    telephone: string;
+  }>;
   status: VehicleStatus;
   ageSeconds: number | null;
 };
@@ -148,6 +153,10 @@ function calculateStatus(live: LiveVehicle): VehicleStatus {
   return "STOPPED";
 }
 
+function telHref(phone: string) {
+  return `tel:${phone.replace(/[^\d+]/g, "")}`;
+}
+
 function loadSavedView() {
   try {
     const raw = localStorage.getItem(VIEW_STORAGE_KEY);
@@ -244,7 +253,11 @@ export default function CarteUnitesPage() {
   const circuitsByVehicle = useMemo(() => {
     const map = new Map<
       string,
-      { circuits: string[]; conducteurs: string[] }
+      {
+        circuits: string[];
+        conducteurs: string[];
+        contactsConducteur: Array<{ nom: string; telephone: string }>;
+      }
     >();
 
     for (const row of circuits) {
@@ -252,9 +265,14 @@ export default function CarteUnitesPage() {
       if (!unit) continue;
 
       const key = `${companyCode(row.compagnie)}::${unit}`;
-      const current = map.get(key) ?? { circuits: [], conducteurs: [] };
+      const current = map.get(key) ?? {
+        circuits: [],
+        conducteurs: [],
+        contactsConducteur: [],
+      };
       const circuit = String(row.circuit ?? "").trim();
       const conducteur = String(row.nom_conducteur ?? "").trim();
+      const telephone = String(row.telephone ?? "").trim();
 
       if (circuit && !current.circuits.includes(circuit)) {
         current.circuits.push(circuit);
@@ -273,6 +291,21 @@ export default function CarteUnitesPage() {
         );
       }
 
+      if (conducteur || telephone) {
+        const contactExiste = current.contactsConducteur.some(
+          (contact) =>
+            normalizeText(contact.nom) === normalizeText(conducteur) &&
+            contact.telephone === telephone,
+        );
+
+        if (!contactExiste) {
+          current.contactsConducteur.push({
+            nom: conducteur || "Conducteur",
+            telephone,
+          });
+        }
+      }
+
       map.set(key, current);
     }
 
@@ -288,6 +321,7 @@ export default function CarteUnitesPage() {
         const extra = circuitsByVehicle.get(key) ?? {
           circuits: [],
           conducteurs: [],
+          contactsConducteur: [],
         };
         const ageSeconds = calculateAgeSeconds(live.updatedAt);
 
@@ -297,6 +331,7 @@ export default function CarteUnitesPage() {
           key,
           circuits: extra.circuits,
           conducteurs: extra.conducteurs,
+          contactsConducteur: extra.contactsConducteur,
           status: calculateStatus(live),
           ageSeconds,
         };
@@ -821,7 +856,9 @@ export default function CarteUnitesPage() {
 
     map.on("contextmenu", (event) => {
       event.preventDefault();
-      const key = selectedKeyRef.current;
+
+      // L'ETA est disponible seulement pendant le suivi d'une unité.
+      const key = followKeyRef.current;
       if (!key) return;
 
       const vehicle = latestDisplayRef.current.find((item) => item.key === key);
@@ -848,7 +885,7 @@ export default function CarteUnitesPage() {
       try {
         const { data, error: circuitsError } = await circuitSupabase
           .from("circuits_scolaires")
-          .select("circuit, unite, compagnie, nom_conducteur");
+          .select("circuit, unite, compagnie, nom_conducteur, telephone");
 
         if (circuitsError) throw circuitsError;
 
@@ -982,11 +1019,14 @@ export default function CarteUnitesPage() {
 
     if (followKey === selectedVehicle.key) {
       setFollowKey(null);
+      clearRoute();
       return;
     }
 
+    clearRoute();
     setFollowKey(selectedVehicle.key);
 
+    // "Suivre" centre immédiatement l'unité, puis continue de la suivre.
     if (validCoordinate(selectedVehicle)) {
       mapRef.current?.easeTo({
         center: [
@@ -997,7 +1037,45 @@ export default function CarteUnitesPage() {
         duration: 500,
       });
     }
-  }, [followKey, selectedVehicle]);
+  }, [clearRoute, followKey, selectedVehicle]);
+
+  useEffect(() => {
+    const q = normalizeText(search);
+    if (!q) return;
+
+    const exactMatches = displayVehicles.filter((vehicle) => {
+      return (
+        normalizeText(vehicle.unit) === q ||
+        vehicle.circuits.some((circuit) => normalizeText(circuit) === q)
+      );
+    });
+
+    const target =
+      exactMatches.length === 1
+        ? exactMatches[0]
+        : displayVehicles.length === 1
+          ? displayVehicles[0]
+          : null;
+
+    if (!target) return;
+
+    setSelectedKey(target.key);
+    setSidebarOpen(true);
+
+    if (followKey !== target.key) {
+      clearRoute();
+      setFollowKey(target.key);
+    }
+
+    if (validCoordinate(target)) {
+      mapRef.current?.easeTo({
+        center: [Number(target.longitude), Number(target.latitude)],
+        zoom: Math.max(mapRef.current?.getZoom() ?? 0, 15),
+        duration: 500,
+      });
+    }
+  }, [search, displayVehicles, followKey, clearRoute]);
+
 
 
 
@@ -1286,9 +1364,45 @@ export default function CarteUnitesPage() {
               <div className="fleet-section">
                 <div className="fleet-section-title">Conducteur</div>
                 <div className="fleet-section-value">
-                  {selectedVehicle.conducteurs.length
-                    ? selectedVehicle.conducteurs.join(", ")
-                    : "Non assigné"}
+                  {selectedVehicle.contactsConducteur.length > 0 ? (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {selectedVehicle.contactsConducteur.map((contact, index) => (
+                        <div
+                          key={`${contact.nom}-${contact.telephone}-${index}`}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 10,
+                          }}
+                        >
+                          <span>{contact.nom || "Conducteur"}</span>
+                          {contact.telephone ? (
+                            <a
+                              href={telHref(contact.telephone)}
+                              style={{
+                                color: "#1d4ed8",
+                                fontWeight: 900,
+                                textDecoration: "none",
+                                whiteSpace: "nowrap",
+                              }}
+                              title={`Appeler ${contact.nom || "le conducteur"}`}
+                            >
+                              ☎ {contact.telephone}
+                            </a>
+                          ) : (
+                            <span style={{ color: "#64748b", fontWeight: 700 }}>
+                              Téléphone non disponible
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : selectedVehicle.conducteurs.length ? (
+                    selectedVehicle.conducteurs.join(", ")
+                  ) : (
+                    "Non assigné"
+                  )}
                 </div>
               </div>
 
@@ -1305,14 +1419,6 @@ export default function CarteUnitesPage() {
               <div className="fleet-detail-actions">
                 <button
                   type="button"
-                  className="fleet-btn"
-                  onClick={() => selectVehicle(selectedVehicle.key, true)}
-                >
-                  Centrer sur l’unité
-                </button>
-
-                <button
-                  type="button"
                   className={`fleet-btn ${
                     followKey === selectedVehicle.key ? "fleet-following" : ""
                   }`}
@@ -1324,38 +1430,42 @@ export default function CarteUnitesPage() {
                 </button>
               </div>
 
-              <div className="fleet-route-help">
-                Clic droit sur la carte pour choisir une destination et calculer
-                automatiquement l’heure d’arrivée de cette unité.
-              </div>
+              {followKey === selectedVehicle.key && (
+                <>
+                  <div className="fleet-route-help">
+                    Clic droit sur la carte pour choisir une destination et
+                    calculer automatiquement l’heure d’arrivée de cette unité.
+                  </div>
 
-              {destination && (
-                <div className="fleet-route-box">
-                  {etaLoading ? (
-                    <div>Calcul de l’itinéraire…</div>
-                  ) : eta ? (
-                    <>
-                      <strong>
-                        {fmtDuration(eta.durationSeconds)} ·{" "}
-                        {fmtDistance(eta.distanceMeters)}
-                      </strong>
-                      <div>Arrivée estimée : {fmtTime(eta.arrivalAt)}</div>
-                    </>
-                  ) : (
-                    <div>Destination sélectionnée.</div>
+                  {destination && (
+                    <div className="fleet-route-box">
+                      {etaLoading ? (
+                        <div>Calcul de l’itinéraire…</div>
+                      ) : eta ? (
+                        <>
+                          <strong>
+                            {fmtDuration(eta.durationSeconds)} ·{" "}
+                            {fmtDistance(eta.distanceMeters)}
+                          </strong>
+                          <div>Arrivée estimée : {fmtTime(eta.arrivalAt)}</div>
+                        </>
+                      ) : (
+                        <div>Destination sélectionnée.</div>
+                      )}
+
+                      {etaError && <div className="fleet-error">{etaError}</div>}
+
+                      <button
+                        type="button"
+                        className="fleet-btn"
+                        style={{ marginTop: 9 }}
+                        onClick={clearRoute}
+                      >
+                        Effacer la destination
+                      </button>
+                    </div>
                   )}
-
-                  {etaError && <div className="fleet-error">{etaError}</div>}
-
-                  <button
-                    type="button"
-                    className="fleet-btn"
-                    style={{ marginTop: 9 }}
-                    onClick={clearRoute}
-                  >
-                    Effacer la destination
-                  </button>
-                </div>
+                </>
               )}
             </div>
           )}
