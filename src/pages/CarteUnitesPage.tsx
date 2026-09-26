@@ -85,6 +85,29 @@ type HistoryStop = {
   durationMinutes: number;
 };
 
+type SchoolRow = {
+  id?: string;
+  nom_ecole: string;
+  adresse?: string | null;
+  latitude: number;
+  longitude: number;
+  actif?: boolean | null;
+};
+
+type SpeedingInterval = {
+  startTime: string;
+  endTime: string;
+  postedSpeedLimitKph: number | null;
+  maxSpeedKph: number | null;
+  maxSpeedOverKph: number | null;
+  severityLevel: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  address: string | null;
+};
+
+type TimelineMode = "TRIP" | "SPEED";
+
 const REFRESH_MS = 5000;
 const SOC_REFRESH_MS = 30000;
 const STALE_AFTER_SECONDS = 180;
@@ -105,6 +128,10 @@ const HISTORY_LAYER_ID = "fleet-history-layer";
 const HISTORY_POINT_SOURCE_ID = "fleet-history-point-source";
 const HISTORY_POINT_LAYER_ID = "fleet-history-point-layer";
 
+const SCHOOL_SOURCE_ID = "fleet-school-source";
+const SCHOOL_POINT_LAYER_ID = "fleet-school-points";
+const SCHOOL_LABEL_LAYER_ID = "fleet-school-labels";
+
 const VIEW_STORAGE_KEY = "gb-circuits-fleet-view-v2";
 
 const companyColor: Record<Compagnie, string> = {
@@ -112,6 +139,116 @@ const companyColor: Record<Compagnie, string> = {
   AC: "#f59e0b",
   TS: "#16a34a",
 };
+
+function schoolGeoJson(schools: SchoolRow[]) {
+  return {
+    type: "FeatureCollection",
+    features: schools
+      .filter(
+        (school) =>
+          school.actif !== false &&
+          Number.isFinite(Number(school.latitude)) &&
+          Number.isFinite(Number(school.longitude)),
+      )
+      .map((school) => ({
+        type: "Feature",
+        properties: {
+          id: school.id ?? "",
+          nom: school.nom_ecole,
+          adresse: school.adresse ?? "",
+        },
+        geometry: {
+          type: "Point",
+          coordinates: [
+            Number(school.longitude),
+            Number(school.latitude),
+          ],
+        },
+      })),
+  };
+}
+
+function speedingColor(overKph: number | null) {
+  if (overKph == null || overKph <= 0) return "#cbd5e1";
+  if (overKph >= 16) return "#dc2626";
+  if (overKph >= 12) return "#c2410c";
+  return "#f59e0b";
+}
+
+function findSpeedingInterval(
+  time: string,
+  intervals: SpeedingInterval[],
+) {
+  const timestamp = Date.parse(time);
+  if (!Number.isFinite(timestamp)) return null;
+
+  return (
+    intervals.find((interval) => {
+      const start = Date.parse(interval.startTime);
+      const end = Date.parse(interval.endTime);
+      return (
+        Number.isFinite(start) &&
+        Number.isFinite(end) &&
+        timestamp >= start &&
+        timestamp <= end
+      );
+    }) ?? null
+  );
+}
+
+function buildSpeedingGradient(
+  points: HistoryPoint[],
+  intervals: SpeedingInterval[],
+) {
+  if (points.length < 2) {
+    return "linear-gradient(to right, #cbd5e1 0%, #cbd5e1 100%)";
+  }
+
+  const maxIndex = points.length - 1;
+  const segments: Array<{
+    startIndex: number;
+    endIndex: number;
+    color: string;
+  }> = [];
+
+  let startIndex = 0;
+  let currentColor = speedingColor(
+    findSpeedingInterval(points[0].time, intervals)?.maxSpeedOverKph ?? null,
+  );
+
+  for (let i = 1; i < points.length; i += 1) {
+    const color = speedingColor(
+      findSpeedingInterval(points[i].time, intervals)?.maxSpeedOverKph ?? null,
+    );
+
+    if (color !== currentColor) {
+      segments.push({
+        startIndex,
+        endIndex: i,
+        color: currentColor,
+      });
+      startIndex = i;
+      currentColor = color;
+    }
+  }
+
+  segments.push({
+    startIndex,
+    endIndex: maxIndex,
+    color: currentColor,
+  });
+
+  const parts: string[] = [];
+
+  for (const segment of segments) {
+    const start = (segment.startIndex / maxIndex) * 100;
+    const end = (segment.endIndex / maxIndex) * 100;
+    parts.push(`${segment.color} ${start}%`);
+    parts.push(`${segment.color} ${end}%`);
+  }
+
+  return `linear-gradient(to right, ${parts.join(", ")})`;
+}
 
 function normalizeText(value: unknown) {
   return String(value ?? "")
@@ -418,6 +555,13 @@ export default function CarteUnitesPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [historyIndex, setHistoryIndex] = useState(0);
+  const [schools, setSchools] = useState<SchoolRow[]>([]);
+  const [timelineMode, setTimelineMode] = useState<TimelineMode>("TRIP");
+  const [speedingIntervals, setSpeedingIntervals] = useState<SpeedingInterval[]>([]);
+  const [speedingLoading, setSpeedingLoading] = useState(false);
+  const [speedingError, setSpeedingError] = useState("");
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(30);
 
   useEffect(() => {
     selectedKeyRef.current = selectedKey;
@@ -998,6 +1142,90 @@ export default function CarteUnitesPage() {
         },
       });
 
+      map.addSource(SCHOOL_SOURCE_ID, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      map.addLayer({
+        id: SCHOOL_POINT_LAYER_ID,
+        type: "circle",
+        source: SCHOOL_SOURCE_ID,
+        minzoom: 9,
+        paint: {
+          "circle-radius": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            9,
+            4,
+            14,
+            6,
+          ],
+          "circle-color": "#0f766e",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2,
+          "circle-opacity": 0.95,
+        },
+      });
+
+      map.addLayer({
+        id: SCHOOL_LABEL_LAYER_ID,
+        type: "symbol",
+        source: SCHOOL_SOURCE_ID,
+        minzoom: 10.5,
+        layout: {
+          "text-field": ["get", "nom"],
+          "text-size": 11,
+          "text-offset": [0, 1.2],
+          "text-anchor": "top",
+          "text-allow-overlap": false,
+          "text-ignore-placement": false,
+        },
+        paint: {
+          "text-color": "#134e4a",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 2,
+        },
+      });
+
+      map.on("click", SCHOOL_POINT_LAYER_ID, (event) => {
+        const feature = event.features?.[0] as any;
+        if (!feature) return;
+
+        const coordinates = feature.geometry?.coordinates as [number, number];
+        const nom = String(feature.properties?.nom ?? "École");
+        const adresse = String(feature.properties?.adresse ?? "");
+
+        const wrapper = document.createElement("div");
+        wrapper.style.fontFamily = "inherit";
+
+        const title = document.createElement("strong");
+        title.textContent = nom;
+        wrapper.appendChild(title);
+
+        if (adresse) {
+          const address = document.createElement("div");
+          address.textContent = adresse;
+          address.style.marginTop = "4px";
+          address.style.fontSize = "12px";
+          wrapper.appendChild(address);
+        }
+
+        new mapboxgl.Popup({ offset: 10 })
+          .setLngLat(coordinates)
+          .setDOMContent(wrapper)
+          .addTo(map);
+      });
+
+      map.on("mouseenter", SCHOOL_POINT_LAYER_ID, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+
+      map.on("mouseleave", SCHOOL_POINT_LAYER_ID, () => {
+        map.getCanvas().style.cursor = "";
+      });
+
       map.addSource(HISTORY_SOURCE_ID, {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -1173,10 +1401,54 @@ export default function CarteUnitesPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSchools = async () => {
+      const { data, error: schoolsError } = await circuitSupabase
+        .from("ecoles")
+        .select("id, nom_ecole, adresse, latitude, longitude, actif")
+        .order("nom_ecole");
+
+      if (schoolsError) {
+        console.warn(
+          "Table ecoles non disponible ou inaccessible; les repères écoles sont ignorés.",
+          schoolsError,
+        );
+        return;
+      }
+
+      if (!cancelled) {
+        setSchools((data ?? []) as SchoolRow[]);
+      }
+    };
+
+    void loadSchools();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+
+    const source = map.getSource(SCHOOL_SOURCE_ID) as
+      | mapboxgl.GeoJSONSource
+      | undefined;
+
+    source?.setData(schoolGeoJson(schools) as any);
+  }, [schools]);
+
+
   const clearHistoryMap = useCallback(() => {
     setHistoryData(null);
     setHistoryIndex(0);
     setHistoryError("");
+    setSpeedingIntervals([]);
+    setSpeedingError("");
+    setIsPlaying(false);
 
     const map = mapRef.current;
     if (!map || !mapReadyRef.current) return;
@@ -1321,6 +1593,75 @@ export default function CarteUnitesPage() {
     historyEnd,
     selectedVehicle?.vehicleId,
     loadHistory,
+  ]);
+
+  const loadSpeeding = useCallback(async () => {
+    if (!selectedVehicle?.vehicleId || !historyDate) return;
+
+    setSpeedingLoading(true);
+    setSpeedingError("");
+
+    try {
+      const startLocal = new Date(`${historyDate}T${historyStart}:00`);
+      const endLocal = new Date(`${historyDate}T${historyEnd}:00`);
+
+      const { data, error: speedingFunctionError } =
+        await circuitSupabase.functions.invoke("circuit-samsara-live", {
+          body: {
+            mode: "speeding",
+            compagnie: companyFullName(selectedVehicle.compagnie),
+            vehicleId: selectedVehicle.vehicleId,
+            unit: selectedVehicle.unit,
+            startTime: startLocal.toISOString(),
+            endTime: endLocal.toISOString(),
+          },
+        });
+
+      if (speedingFunctionError) throw speedingFunctionError;
+      if (data?.ok === false) {
+        throw new Error(
+          data?.error || "Excès de vitesse Samsara impossibles.",
+        );
+      }
+
+      setSpeedingIntervals(
+        Array.isArray(data?.speeding?.intervals)
+          ? (data.speeding.intervals as SpeedingInterval[])
+          : [],
+      );
+    } catch (err: any) {
+      setSpeedingIntervals([]);
+      setSpeedingError(
+        err?.message ||
+          "Impossible de charger les excès de vitesse Samsara.",
+      );
+    } finally {
+      setSpeedingLoading(false);
+    }
+  }, [
+    historyDate,
+    historyEnd,
+    historyStart,
+    selectedVehicle?.compagnie,
+    selectedVehicle?.unit,
+    selectedVehicle?.vehicleId,
+  ]);
+
+  useEffect(() => {
+    if (!historyOpen || !selectedVehicle?.vehicleId || !historyDate) return;
+
+    const timer = window.setTimeout(() => {
+      void loadSpeeding();
+    }, 220);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    historyOpen,
+    historyDate,
+    historyStart,
+    historyEnd,
+    selectedVehicle?.vehicleId,
+    loadSpeeding,
   ]);
 
   const refreshSoc = useCallback(
@@ -1506,6 +1847,16 @@ export default function CarteUnitesPage() {
     [historyTimelinePoints, historyStops],
   );
 
+  const speedTimelineGradient = useMemo(
+    () => buildSpeedingGradient(historyTimelinePoints, speedingIntervals),
+    [historyTimelinePoints, speedingIntervals],
+  );
+
+  const timelineGradient =
+    timelineMode === "SPEED"
+      ? speedTimelineGradient
+      : historyTimelineGradient;
+
   const activeHistoryStop = useMemo(
     () =>
       historyStops.find(
@@ -1537,6 +1888,17 @@ export default function CarteUnitesPage() {
       durationMinutes: activeHistoryStop.durationMinutes,
     };
   }, [activeHistoryStop, historyTimelinePoints]);
+
+  const activeSpeedingInterval = useMemo(() => {
+    const point =
+      historyTimelinePoints[
+        Math.min(historyIndex, historyTimelinePoints.length - 1)
+      ];
+
+    if (!point) return null;
+    return findSpeedingInterval(point.time, speedingIntervals);
+  }, [historyTimelinePoints, historyIndex, speedingIntervals]);
+
 
   useEffect(() => {
     if (historyTimelinePoints.length === 0) {
@@ -1716,6 +2078,52 @@ export default function CarteUnitesPage() {
     setHistoryIndex(0);
   }, []);
 
+  useEffect(() => {
+    if (!isPlaying || historyTimelinePoints.length < 2) return;
+
+    const startIndex = Math.min(
+      historyIndex,
+      historyTimelinePoints.length - 1,
+    );
+    const startRealTime = Date.now();
+    const startHistoryTime = Date.parse(
+      historyTimelinePoints[startIndex].time,
+    );
+
+    if (!Number.isFinite(startHistoryTime)) {
+      setIsPlaying(false);
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      const simulatedTime =
+        startHistoryTime +
+        (Date.now() - startRealTime) * playbackRate;
+
+      let nextIndex = startIndex;
+
+      while (
+        nextIndex + 1 < historyTimelinePoints.length &&
+        Date.parse(historyTimelinePoints[nextIndex + 1].time) <= simulatedTime
+      ) {
+        nextIndex += 1;
+      }
+
+      setHistoryIndex(nextIndex);
+
+      if (nextIndex >= historyTimelinePoints.length - 1) {
+        setIsPlaying(false);
+      }
+    }, 100);
+
+    return () => window.clearInterval(timer);
+  }, [
+    isPlaying,
+    playbackRate,
+    historyIndex,
+    historyTimelinePoints,
+  ]);
+
   return (
     <div ref={pageRef} className="fleet-page">
       <style>{`
@@ -1786,6 +2194,10 @@ export default function CarteUnitesPage() {
         .fleet-history-summary span { display:block; color:#64748b; font-size:9px; font-weight:900; text-transform:uppercase; }
         .fleet-history-summary strong { display:block; margin-top:3px; font-size:13px; }
         .fleet-history-quick { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+        .fleet-history-modes { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+        .fleet-school-note { margin-top:7px; color:#64748b; font-size:10px; }
+        .fleet-playback { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+        .fleet-playback select { height:32px; border:1px solid #dbe2ea; border-radius:8px; background:#fff; padding:0 7px; font:inherit; font-size:11px; font-weight:800; }
         .fleet-timeline { position:absolute; left:18px; right:18px; bottom:18px; z-index:8; padding:10px 14px; border:1px solid #bfdbfe; background:rgba(255,255,255,.96); border-radius:12px; box-shadow:0 8px 28px rgba(15,23,42,.18); backdrop-filter:blur(8px); }
         .fleet-timeline-top { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:6px; }
         .fleet-timeline-title { font-size:12px; font-weight:900; color:#0f172a; white-space:nowrap; }
@@ -2140,6 +2552,28 @@ export default function CarteUnitesPage() {
                     </label>
                   </div>
 
+                  <div className="fleet-history-modes">
+                    <button
+                      type="button"
+                      className={`fleet-btn ${
+                        timelineMode === "TRIP" ? "active" : ""
+                      }`}
+                      onClick={() => setTimelineMode("TRIP")}
+                    >
+                      Trajet
+                    </button>
+
+                    <button
+                      type="button"
+                      className={`fleet-btn ${
+                        timelineMode === "SPEED" ? "active" : ""
+                      }`}
+                      onClick={() => setTimelineMode("SPEED")}
+                    >
+                      Vitesse
+                    </button>
+                  </div>
+
                   <div className="fleet-history-quick">
                     <button
                       type="button"
@@ -2187,6 +2621,16 @@ export default function CarteUnitesPage() {
 
                   {historyError && (
                     <div className="fleet-error">{historyError}</div>
+                  )}
+
+                  {timelineMode === "SPEED" && speedingLoading && (
+                    <div className="fleet-school-note">
+                      Chargement des excès de vitesse…
+                    </div>
+                  )}
+
+                  {timelineMode === "SPEED" && speedingError && (
+                    <div className="fleet-error">{speedingError}</div>
                   )}
 
                   {historyData && (
@@ -2287,11 +2731,44 @@ export default function CarteUnitesPage() {
           {historyTimelinePoints.length > 0 && (
             <div className="fleet-timeline">
               <div className="fleet-timeline-top">
-                <div className="fleet-timeline-title">
-                  Historique · unité {selectedVehicle?.unit ?? ""} ·{" "}
-                  {fmtTime(historyTimelinePoints[0].time)}–{fmtTime(
-                    historyTimelinePoints[historyTimelinePoints.length - 1].time,
-                  )}
+                <div>
+                  <div className="fleet-timeline-title">
+                    Historique · unité {selectedVehicle?.unit ?? ""} ·{" "}
+                    {fmtTime(historyTimelinePoints[0].time)}–{fmtTime(
+                      historyTimelinePoints[historyTimelinePoints.length - 1].time,
+                    )}
+                  </div>
+
+                  <div className="fleet-playback" style={{ marginTop: 5 }}>
+                    <button
+                      type="button"
+                      className="fleet-btn"
+                      style={{ height: 30 }}
+                      onClick={() => {
+                        if (
+                          historyIndex >=
+                          historyTimelinePoints.length - 1
+                        ) {
+                          setHistoryIndex(0);
+                        }
+                        setIsPlaying((value) => !value);
+                      }}
+                    >
+                      {isPlaying ? "⏸ Pause" : "▶ Lecture"}
+                    </button>
+
+                    <select
+                      value={playbackRate}
+                      onChange={(event) =>
+                        setPlaybackRate(Number(event.target.value))
+                      }
+                      aria-label="Vitesse de lecture"
+                    >
+                      <option value={10}>×10</option>
+                      <option value={30}>×30</option>
+                      <option value={60}>×60</option>
+                    </select>
+                  </div>
                 </div>
 
                 {(() => {
@@ -2310,13 +2787,47 @@ export default function CarteUnitesPage() {
                       {point.speedKph == null
                         ? "Vitesse —"
                         : `${Math.round(point.speedKph)} km/h`}
-                      {activeHistoryStopTimes ? (
+                      {timelineMode === "TRIP" &&
+                      activeHistoryStopTimes ? (
                         <>
                           {" · "}
                           <span className="fleet-stop-detail">
                             Arrêt {fmtTime(activeHistoryStopTimes.startTime)} →{" "}
                             {fmtTime(activeHistoryStopTimes.endTime)} (
                             {activeHistoryStopTimes.durationMinutes} min)
+                          </span>
+                        </>
+                      ) : null}
+                      {timelineMode === "SPEED" &&
+                      activeSpeedingInterval ? (
+                        <>
+                          {" · "}
+                          <span
+                            className="fleet-stop-detail"
+                            style={{
+                              color: speedingColor(
+                                activeSpeedingInterval.maxSpeedOverKph,
+                              ),
+                            }}
+                          >
+                            Limite{" "}
+                            {activeSpeedingInterval.postedSpeedLimitKph == null
+                              ? "—"
+                              : `${Math.round(
+                                  activeSpeedingInterval.postedSpeedLimitKph,
+                                )} km/h`}
+                            {" · Max "}
+                            {activeSpeedingInterval.maxSpeedKph == null
+                              ? "—"
+                              : `${Math.round(
+                                  activeSpeedingInterval.maxSpeedKph,
+                                )} km/h`}
+                            {" · +"}
+                            {activeSpeedingInterval.maxSpeedOverKph == null
+                              ? "—"
+                              : `${activeSpeedingInterval.maxSpeedOverKph.toFixed(
+                                  1,
+                                )} km/h`}
                           </span>
                         </>
                       ) : null}
@@ -2327,7 +2838,8 @@ export default function CarteUnitesPage() {
               </div>
 
               <div className="fleet-timeline-track">
-                {historyStops.flatMap((stop, stopIndex) => {
+                {timelineMode === "TRIP" &&
+                  historyStops.flatMap((stop, stopIndex) => {
                   const maxIndex = Math.max(
                     1,
                     historyTimelinePoints.length - 1,
@@ -2375,25 +2887,53 @@ export default function CarteUnitesPage() {
                     setHistoryIndex(Number(event.target.value))
                   }
                   aria-label="Position précise dans l'historique du trajet"
-                  style={{ background: historyTimelineGradient }}
+                  style={{ background: timelineGradient }}
                 />
               </div>
 
               <div className="fleet-timeline-legend">
-                <span>
-                  <i
-                    className="fleet-timeline-swatch"
-                    style={{ background: "#2563eb" }}
-                  />
-                  Déplacement
-                </span>
-                <span>
-                  <i
-                    className="fleet-timeline-swatch"
-                    style={{ background: "#f59e0b" }}
-                  />
-                  Arrêt de plus de 5 min
-                </span>
+                {timelineMode === "TRIP" ? (
+                  <>
+                    <span>
+                      <i
+                        className="fleet-timeline-swatch"
+                        style={{ background: "#2563eb" }}
+                      />
+                      Déplacement
+                    </span>
+                    <span>
+                      <i
+                        className="fleet-timeline-swatch"
+                        style={{ background: "#f59e0b" }}
+                      />
+                      Arrêt de plus de 5 min
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span>
+                      <i
+                        className="fleet-timeline-swatch"
+                        style={{ background: "#f59e0b" }}
+                      />
+                      Excès jusqu’à +12 km/h
+                    </span>
+                    <span>
+                      <i
+                        className="fleet-timeline-swatch"
+                        style={{ background: "#c2410c" }}
+                      />
+                      Excès +12 km/h
+                    </span>
+                    <span>
+                      <i
+                        className="fleet-timeline-swatch"
+                        style={{ background: "#dc2626" }}
+                      />
+                      Excès +16 km/h
+                    </span>
+                  </>
+                )}
                 <span>
                   <i
                     className="fleet-timeline-swatch"
@@ -2403,7 +2943,7 @@ export default function CarteUnitesPage() {
                       height: 12,
                     }}
                   />
-                  Position exacte du curseur
+                  Position exacte
                 </span>
               </div>
             </div>
