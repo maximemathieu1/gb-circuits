@@ -4,6 +4,10 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import { circuitSupabase } from "../lib/circuitSupabase";
 
 type Compagnie = "AB" | "AC" | "TS";
+type Filter = "ALL" | Compagnie;
+type StatusFilter = "ALL" | "MOVING" | "STOPPED" | "STALE";
+type VehicleStatus = "MOVING" | "STOPPED" | "STALE";
+
 type LiveVehicle = {
   found: boolean;
   unit: string;
@@ -18,28 +22,61 @@ type LiveVehicle = {
   address: string | null;
   updatedAt: string | null;
 };
+
 type CircuitRow = {
   circuit: string;
   unite: string;
   compagnie: string;
+  nom_conducteur: string | null;
 };
+
 type DisplayVehicle = LiveVehicle & {
   compagnie: Compagnie;
   key: string;
   circuits: string[];
+  conducteurs: string[];
+  status: VehicleStatus;
+  ageSeconds: number | null;
 };
-type Filter = "ALL" | Compagnie;
+
+type Destination = {
+  longitude: number;
+  latitude: number;
+};
+
+type EtaInfo = {
+  durationSeconds: number;
+  distanceMeters: number;
+  arrivalAt: string;
+};
 
 const REFRESH_MS = 5000;
+const STALE_AFTER_SECONDS = 180;
+
 const SOURCE_ID = "fleet-source";
+const CLUSTER_LAYER_ID = "fleet-clusters";
+const CLUSTER_COUNT_LAYER_ID = "fleet-cluster-count";
 const CIRCLE_LAYER_ID = "fleet-circles";
 const LABEL_LAYER_ID = "fleet-labels";
 const HEADING_LAYER_ID = "fleet-headings";
+
+const ROUTE_SOURCE_ID = "fleet-route-source";
+const ROUTE_LAYER_ID = "fleet-route-layer";
+const DEST_SOURCE_ID = "fleet-destination-source";
+const DEST_LAYER_ID = "fleet-destination-layer";
+
+const VIEW_STORAGE_KEY = "gb-circuits-fleet-view-v2";
 
 const companyColor: Record<Compagnie, string> = {
   AB: "#2563eb",
   AC: "#f59e0b",
   TS: "#16a34a",
+};
+
+const statusLabel: Record<VehicleStatus, string> = {
+  MOVING: "En mouvement",
+  STOPPED: "À l’arrêt",
+  STALE: "GPS ancien",
 };
 
 function normalizeText(value: unknown) {
@@ -56,7 +93,7 @@ function companyCode(value: string): Compagnie {
   return "AB";
 }
 
-function fmtUpdated(value: string | null) {
+function fmtTime(value: string | null) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
@@ -67,7 +104,31 @@ function fmtUpdated(value: string | null) {
   });
 }
 
-function validCoordinate(vehicle: DisplayVehicle) {
+function fmtAge(seconds: number | null) {
+  if (seconds == null) return "—";
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remain = minutes % 60;
+  return remain ? `${hours} h ${remain} min` : `${hours} h`;
+}
+
+function fmtDistance(meters: number) {
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  return `${(meters / 1000).toFixed(1)} km`;
+}
+
+function fmtDuration(seconds: number) {
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remain = minutes % 60;
+  return remain ? `${hours} h ${remain} min` : `${hours} h`;
+}
+
+
+function validCoordinate(vehicle: Pick<DisplayVehicle, "latitude" | "longitude">) {
   const lat = Number(vehicle.latitude);
   const lng = Number(vehicle.longitude);
   return (
@@ -80,13 +141,35 @@ function validCoordinate(vehicle: DisplayVehicle) {
   );
 }
 
-function escapeHtml(value: unknown) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function calculateAgeSeconds(updatedAt: string | null) {
+  if (!updatedAt) return null;
+  const timestamp = new Date(updatedAt).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+}
+
+function calculateStatus(live: LiveVehicle): VehicleStatus {
+  const age = calculateAgeSeconds(live.updatedAt);
+  if (age == null || age > STALE_AFTER_SECONDS) return "STALE";
+  if (Number(live.speedKph ?? 0) >= 3) return "MOVING";
+  return "STOPPED";
+}
+
+function loadSavedView() {
+  try {
+    const raw = localStorage.getItem(VIEW_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const lng = Number(parsed.lng);
+    const lat = Number(parsed.lat);
+    const zoom = Number(parsed.zoom);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat) || !Number.isFinite(zoom)) {
+      return null;
+    }
+    return { lng, lat, zoom };
+  } catch {
+    return null;
+  }
 }
 
 function toGeoJson(items: DisplayVehicle[]) {
@@ -110,6 +193,9 @@ function toGeoJson(items: DisplayVehicle[]) {
         address: vehicle.address ?? "",
         updatedAt: vehicle.updatedAt ?? "",
         circuits: vehicle.circuits.join(", "),
+        conducteurs: vehicle.conducteurs.join(", "),
+        status: vehicle.status,
+        opacity: vehicle.status === "STALE" ? 0.52 : 0.96,
       },
       geometry: {
         type: "Point" as const,
@@ -121,37 +207,77 @@ function toGeoJson(items: DisplayVehicle[]) {
 
 export default function CarteUnitesPage() {
   const mapNode = useRef<HTMLDivElement | null>(null);
+  const pageRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const mapReadyRef = useRef(false);
   const firstFitDoneRef = useRef(false);
   const busyRef = useRef(false);
   const latestDisplayRef = useRef<DisplayVehicle[]>([]);
-  const popupRef = useRef<mapboxgl.Popup | null>(null);
+  const selectedKeyRef = useRef<string | null>(null);
+  const followKeyRef = useRef<string | null>(null);
+  const destinationRef = useRef<Destination | null>(null);
+  const routeAbortRef = useRef<AbortController | null>(null);
+  const routeRequestIdRef = useRef(0);
 
   const [vehicles, setVehicles] = useState<Record<string, LiveVehicle>>({});
   const [circuits, setCircuits] = useState<CircuitRow[]>([]);
   const [filter, setFilter] = useState<Filter>("ALL");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [followKey, setFollowKey] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [destination, setDestination] = useState<Destination | null>(null);
+  const [eta, setEta] = useState<EtaInfo | null>(null);
+  const [etaLoading, setEtaLoading] = useState(false);
+  const [etaError, setEtaError] = useState("");
+  const [fullscreen, setFullscreen] = useState(false);
+
+  useEffect(() => {
+    selectedKeyRef.current = selectedKey;
+  }, [selectedKey]);
+
+  useEffect(() => {
+    followKeyRef.current = followKey;
+  }, [followKey]);
+
+  useEffect(() => {
+    destinationRef.current = destination;
+  }, [destination]);
 
   const circuitsByVehicle = useMemo(() => {
-    const map = new Map<string, string[]>();
+    const map = new Map<
+      string,
+      { circuits: string[]; conducteurs: string[] }
+    >();
 
     for (const row of circuits) {
       const unit = String(row.unite ?? "").trim();
-      const circuit = String(row.circuit ?? "").trim();
-      if (!unit || !circuit) continue;
+      if (!unit) continue;
 
       const key = `${companyCode(row.compagnie)}::${unit}`;
-      const current = map.get(key) ?? [];
+      const current = map.get(key) ?? { circuits: [], conducteurs: [] };
+      const circuit = String(row.circuit ?? "").trim();
+      const conducteur = String(row.nom_conducteur ?? "").trim();
 
-      if (!current.includes(circuit)) {
-        current.push(circuit);
-        current.sort((a, b) =>
-          a.localeCompare(b, "fr-CA", { numeric: true, sensitivity: "base" }),
+      if (circuit && !current.circuits.includes(circuit)) {
+        current.circuits.push(circuit);
+        current.circuits.sort((a, b) =>
+          a.localeCompare(b, "fr-CA", {
+            numeric: true,
+            sensitivity: "base",
+          }),
+        );
+      }
+
+      if (conducteur && !current.conducteurs.includes(conducteur)) {
+        current.conducteurs.push(conducteur);
+        current.conducteurs.sort((a, b) =>
+          a.localeCompare(b, "fr-CA", { sensitivity: "base" }),
         );
       }
 
@@ -161,84 +287,259 @@ export default function CarteUnitesPage() {
     return map;
   }, [circuits]);
 
-  const displayVehicles = useMemo<DisplayVehicle[]>(() => {
-    const q = normalizeText(search);
-
+  const allDisplayVehicles = useMemo<DisplayVehicle[]>(() => {
     return Object.entries(vehicles)
       .map(([key, live]) => {
         const prefix = key.split("::")[0];
         const compagnie: Compagnie =
           prefix === "AC" ? "AC" : prefix === "TS" ? "TS" : "AB";
+        const extra = circuitsByVehicle.get(key) ?? {
+          circuits: [],
+          conducteurs: [],
+        };
+        const ageSeconds = calculateAgeSeconds(live.updatedAt);
 
         return {
           ...live,
           compagnie,
           key,
-          circuits: circuitsByVehicle.get(key) ?? [],
+          circuits: extra.circuits,
+          conducteurs: extra.conducteurs,
+          status: calculateStatus(live),
+          ageSeconds,
         };
       })
       .filter((vehicle) => vehicle.found !== false)
       .filter(validCoordinate)
-      .filter((vehicle) => filter === "ALL" || vehicle.compagnie === filter)
-      .filter((vehicle) => {
-        if (!q) return true;
-
-        return (
-          normalizeText(vehicle.unit).includes(q) ||
-          vehicle.circuits.some((circuit) => normalizeText(circuit).includes(q))
-        );
-      })
       .sort((a, b) =>
         String(a.unit).localeCompare(String(b.unit), "fr-CA", {
           numeric: true,
           sensitivity: "base",
         }),
       );
-  }, [vehicles, circuitsByVehicle, filter, search]);
+  }, [vehicles, circuitsByVehicle]);
 
-  const fitVehicles = useCallback(
-    (items: DisplayVehicle[], animate = true) => {
-      const map = mapRef.current;
-      const valid = items.filter(validCoordinate);
-      if (!map || !mapReadyRef.current || valid.length === 0) return false;
+  const displayVehicles = useMemo(() => {
+    const q = normalizeText(search);
 
-      if (valid.length === 1) {
-        map[animate ? "easeTo" : "jumpTo"]({
+    return allDisplayVehicles.filter((vehicle) => {
+      if (filter !== "ALL" && vehicle.compagnie !== filter) return false;
+      if (statusFilter !== "ALL" && vehicle.status !== statusFilter) return false;
+
+      if (!q) return true;
+
+      return (
+        normalizeText(vehicle.unit).includes(q) ||
+        vehicle.circuits.some((circuit) => normalizeText(circuit).includes(q)) ||
+        vehicle.conducteurs.some((name) => normalizeText(name).includes(q))
+      );
+    });
+  }, [allDisplayVehicles, filter, statusFilter, search]);
+
+  const selectedVehicle = useMemo(() => {
+    if (!selectedKey) return null;
+    return allDisplayVehicles.find((vehicle) => vehicle.key === selectedKey) ?? null;
+  }, [allDisplayVehicles, selectedKey]);
+
+  const counts = useMemo(() => {
+    return {
+      total: allDisplayVehicles.length,
+      moving: allDisplayVehicles.filter((v) => v.status === "MOVING").length,
+      stopped: allDisplayVehicles.filter((v) => v.status === "STOPPED").length,
+      stale: allDisplayVehicles.filter((v) => v.status === "STALE").length,
+    };
+  }, [allDisplayVehicles]);
+
+  const fitVehicles = useCallback((items: DisplayVehicle[], animate = true) => {
+    const map = mapRef.current;
+    const valid = items.filter(validCoordinate);
+    if (!map || !mapReadyRef.current || valid.length === 0) return false;
+
+    if (valid.length === 1) {
+      if (animate) {
+        map.easeTo({
+          center: [Number(valid[0].longitude), Number(valid[0].latitude)],
+          zoom: Math.max(map.getZoom(), 15),
+          duration: 500,
+        });
+      } else {
+        map.jumpTo({
           center: [Number(valid[0].longitude), Number(valid[0].latitude)],
           zoom: 15,
-          ...(animate ? { duration: 500 } : {}),
-        } as any);
-        return true;
+        });
       }
-
-      const bounds = new mapboxgl.LngLatBounds();
-      valid.forEach((vehicle) => {
-        bounds.extend([Number(vehicle.longitude), Number(vehicle.latitude)]);
-      });
-      map.fitBounds(bounds, {
-        padding: { top: 110, right: 70, bottom: 70, left: 70 },
-        maxZoom: 14,
-        duration: animate ? 600 : 0,
-      });
       return true;
-    },
-    [],
-  );
+    }
+
+    const bounds = new mapboxgl.LngLatBounds();
+    valid.forEach((vehicle) => {
+      bounds.extend([Number(vehicle.longitude), Number(vehicle.latitude)]);
+    });
+
+    map.fitBounds(bounds, {
+      padding: { top: 50, right: 50, bottom: 50, left: 50 },
+      maxZoom: 14,
+      duration: animate ? 600 : 0,
+    });
+
+    return true;
+  }, []);
 
   const syncMapData = useCallback((items: DisplayVehicle[]) => {
     const map = mapRef.current;
     if (!map || !mapReadyRef.current) return;
+
     const source = map.getSource(SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
     if (!source) return;
+
     source.setData(toGeoJson(items) as any);
   }, []);
+
+  const selectVehicle = useCallback((key: string, center = false) => {
+    const vehicle = latestDisplayRef.current.find((item) => item.key === key);
+    setSelectedKey(key);
+    setSidebarOpen(true);
+
+    if (center && vehicle && validCoordinate(vehicle)) {
+      mapRef.current?.easeTo({
+        center: [Number(vehicle.longitude), Number(vehicle.latitude)],
+        zoom: Math.max(mapRef.current.getZoom(), 15),
+        duration: 500,
+      });
+    }
+  }, []);
+
+  const clearRoute = useCallback(() => {
+    routeAbortRef.current?.abort();
+    routeAbortRef.current = null;
+    routeRequestIdRef.current += 1;
+
+    setDestination(null);
+    setEta(null);
+    setEtaError("");
+    setEtaLoading(false);
+
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+
+    const routeSource = map.getSource(ROUTE_SOURCE_ID) as
+      | mapboxgl.GeoJSONSource
+      | undefined;
+    routeSource?.setData({
+      type: "FeatureCollection",
+      features: [],
+    } as any);
+
+    const destinationSource = map.getSource(DEST_SOURCE_ID) as
+      | mapboxgl.GeoJSONSource
+      | undefined;
+    destinationSource?.setData({
+      type: "FeatureCollection",
+      features: [],
+    } as any);
+  }, []);
+
+  const calculateRoute = useCallback(
+    async (vehicle: DisplayVehicle, nextDestination: Destination) => {
+      const token =
+        import.meta.env.VITE_MAPBOX_TOKEN ||
+        import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
+      if (!token || !validCoordinate(vehicle)) return;
+
+      const requestId = ++routeRequestIdRef.current;
+      routeAbortRef.current?.abort();
+      const controller = new AbortController();
+      routeAbortRef.current = controller;
+
+      setDestination(nextDestination);
+      setEta(null);
+      setEtaError("");
+      setEtaLoading(true);
+
+      try {
+        const coordinates =
+          `${vehicle.longitude},${vehicle.latitude};` +
+          `${nextDestination.longitude},${nextDestination.latitude}`;
+
+        const response = await fetch(
+          `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinates}` +
+            `?alternatives=false&geometries=geojson&overview=full&steps=false` +
+            `&access_token=${encodeURIComponent(token)}`,
+          { signal: controller.signal },
+        );
+
+        if (!response.ok) {
+          throw new Error(`Mapbox Directions ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (requestId !== routeRequestIdRef.current) return;
+
+        const route = data?.routes?.[0];
+        if (!route?.geometry) {
+          throw new Error("Aucun itinéraire trouvé.");
+        }
+
+        const durationSeconds = Number(route.duration ?? 0);
+        const distanceMeters = Number(route.distance ?? 0);
+
+        setEta({
+          durationSeconds,
+          distanceMeters,
+          arrivalAt: new Date(
+            Date.now() + durationSeconds * 1000,
+          ).toISOString(),
+        });
+
+        const map = mapRef.current;
+        if (!map || !mapReadyRef.current) return;
+
+        const routeSource = map.getSource(ROUTE_SOURCE_ID) as
+          | mapboxgl.GeoJSONSource
+          | undefined;
+        routeSource?.setData({
+          type: "Feature",
+          properties: {},
+          geometry: route.geometry,
+        } as any);
+
+        const destinationSource = map.getSource(DEST_SOURCE_ID) as
+          | mapboxgl.GeoJSONSource
+          | undefined;
+        destinationSource?.setData({
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              properties: {},
+              geometry: {
+                type: "Point",
+                coordinates: [
+                  nextDestination.longitude,
+                  nextDestination.latitude,
+                ],
+              },
+            },
+          ],
+        } as any);
+      } catch (err: any) {
+        if (err?.name === "AbortError") return;
+        setEtaError(err?.message || "Impossible de calculer l’itinéraire.");
+      } finally {
+        if (requestId === routeRequestIdRef.current) {
+          setEtaLoading(false);
+        }
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     latestDisplayRef.current = displayVehicles;
     syncMapData(displayVehicles);
 
-    // Un seul cadrage automatique: au premier chargement GPS valide.
-    // Les actualisations et les filtres ne changent ensuite jamais le zoom.
     if (
       !firstFitDoneRef.current &&
       mapReadyRef.current &&
@@ -247,7 +548,18 @@ export default function CarteUnitesPage() {
       const didFit = fitVehicles(displayVehicles, false);
       if (didFit) firstFitDoneRef.current = true;
     }
-  }, [displayVehicles, fitVehicles, syncMapData]);
+
+    const follow = followKeyRef.current;
+    if (follow) {
+      const vehicle = allDisplayVehicles.find((item) => item.key === follow);
+      if (vehicle && validCoordinate(vehicle)) {
+        mapRef.current?.easeTo({
+          center: [Number(vehicle.longitude), Number(vehicle.latitude)],
+          duration: 650,
+        });
+      }
+    }
+  }, [displayVehicles, allDisplayVehicles, fitVehicles, syncMapData]);
 
   useEffect(() => {
     const token =
@@ -255,20 +567,26 @@ export default function CarteUnitesPage() {
       import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
     if (!mapNode.current) return;
+
     if (!token) {
       setError("Token Mapbox manquant.");
       return;
     }
 
     mapboxgl.accessToken = token;
+    const savedView = loadSavedView();
 
     const map = new mapboxgl.Map({
       container: mapNode.current,
       style: "mapbox://styles/mapbox/streets-v12",
-      center: [-70.67, 46.12],
-      zoom: 9,
+      center: savedView ? [savedView.lng, savedView.lat] : [-70.67, 46.12],
+      zoom: savedView?.zoom ?? 9,
       attributionControl: true,
     });
+
+    if (savedView) {
+      firstFitDoneRef.current = true;
+    }
 
     mapRef.current = map;
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
@@ -279,29 +597,78 @@ export default function CarteUnitesPage() {
       map.addSource(SOURCE_ID, {
         type: "geojson",
         data: toGeoJson([]) as any,
+        cluster: true,
+        clusterMaxZoom: 13,
+        clusterRadius: 42,
+      } as any);
+
+      map.addLayer({
+        id: CLUSTER_LAYER_ID,
+        type: "circle",
+        source: SOURCE_ID,
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": "#0f172a",
+          "circle-radius": [
+            "step",
+            ["get", "point_count"],
+            20,
+            5,
+            24,
+            15,
+            30,
+            30,
+            36,
+          ],
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 3,
+          "circle-opacity": 0.9,
+        },
+      });
+
+      map.addLayer({
+        id: CLUSTER_COUNT_LAYER_ID,
+        type: "symbol",
+        source: SOURCE_ID,
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": ["get", "point_count_abbreviated"],
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-size": 13,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
+        paint: {
+          "text-color": "#ffffff",
+        },
       });
 
       map.addLayer({
         id: CIRCLE_LAYER_ID,
         type: "circle",
         source: SOURCE_ID,
+        filter: ["!", ["has", "point_count"]],
         paint: {
           "circle-radius": [
             "interpolate",
             ["linear"],
             ["zoom"],
             7,
+            11,
             12,
-            12,
+            15,
             16,
-            16,
-            19,
+            18,
           ],
           "circle-color": ["get", "color"],
-          "circle-stroke-color": "#ffffff",
+          "circle-stroke-color": [
+            "case",
+            ["==", ["get", "status"], "STALE"],
+            "#64748b",
+            "#ffffff",
+          ],
           "circle-stroke-width": 3,
-          "circle-opacity": 0.96,
-          "circle-stroke-opacity": 1,
+          "circle-opacity": ["get", "opacity"],
         },
       });
 
@@ -309,6 +676,7 @@ export default function CarteUnitesPage() {
         id: LABEL_LAYER_ID,
         type: "symbol",
         source: SOURCE_ID,
+        filter: ["!", ["has", "point_count"]],
         layout: {
           "text-field": ["get", "unit"],
           "text-size": [
@@ -336,6 +704,7 @@ export default function CarteUnitesPage() {
         id: HEADING_LAYER_ID,
         type: "symbol",
         source: SOURCE_ID,
+        filter: ["!", ["has", "point_count"]],
         layout: {
           "text-field": "▲",
           "text-size": 14,
@@ -349,6 +718,44 @@ export default function CarteUnitesPage() {
           "text-color": ["get", "color"],
           "text-halo-color": "#ffffff",
           "text-halo-width": 1.5,
+          "text-opacity": ["get", "opacity"],
+        },
+      });
+
+      map.addSource(ROUTE_SOURCE_ID, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      map.addLayer({
+        id: ROUTE_LAYER_ID,
+        type: "line",
+        source: ROUTE_SOURCE_ID,
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": "#2563eb",
+          "line-width": 5,
+          "line-opacity": 0.85,
+        },
+      });
+
+      map.addSource(DEST_SOURCE_ID, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      map.addLayer({
+        id: DEST_LAYER_ID,
+        type: "circle",
+        source: DEST_SOURCE_ID,
+        paint: {
+          "circle-radius": 9,
+          "circle-color": "#dc2626",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 3,
         },
       });
 
@@ -363,6 +770,60 @@ export default function CarteUnitesPage() {
       }
     });
 
+    map.on("moveend", () => {
+      const center = map.getCenter();
+      try {
+        localStorage.setItem(
+          VIEW_STORAGE_KEY,
+          JSON.stringify({
+            lng: center.lng,
+            lat: center.lat,
+            zoom: map.getZoom(),
+          }),
+        );
+      } catch {
+        // Rien à faire si le stockage local est indisponible.
+      }
+    });
+
+    map.on("click", CLUSTER_LAYER_ID, (event) => {
+      const feature = event.features?.[0] as any;
+      if (!feature) return;
+
+      const clusterId = feature.properties?.cluster_id;
+      const coordinates = feature.geometry?.coordinates as [number, number];
+      const source = map.getSource(SOURCE_ID) as any;
+
+      if (clusterId == null || !source) return;
+
+      source.getClusterExpansionZoom(
+        clusterId,
+        (clusterError: Error | null, zoom: number) => {
+          if (clusterError) return;
+          map.easeTo({
+            center: coordinates,
+            zoom,
+            duration: 450,
+          });
+        },
+      );
+    });
+
+    map.on("click", CIRCLE_LAYER_ID, (event) => {
+      const feature = event.features?.[0] as any;
+      const key = String(feature?.properties?.key ?? "");
+      if (!key) return;
+      selectVehicle(key, false);
+    });
+
+    map.on("mouseenter", CLUSTER_LAYER_ID, () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+
+    map.on("mouseleave", CLUSTER_LAYER_ID, () => {
+      map.getCanvas().style.cursor = "";
+    });
+
     map.on("mouseenter", CIRCLE_LAYER_ID, () => {
       map.getCanvas().style.cursor = "pointer";
     });
@@ -371,53 +832,27 @@ export default function CarteUnitesPage() {
       map.getCanvas().style.cursor = "";
     });
 
-    map.on("click", CIRCLE_LAYER_ID, (event) => {
-      const feature = event.features?.[0] as any;
-      if (!feature || feature.geometry?.type !== "Point") return;
+    map.on("contextmenu", (event) => {
+      event.preventDefault();
+      const key = selectedKeyRef.current;
+      if (!key) return;
 
-      const coordinates = [...feature.geometry.coordinates] as [number, number];
-      const props = feature.properties ?? {};
-      const speed =
-        props.speedKph == null || props.speedKph === ""
-          ? "—"
-          : `${Math.round(Number(props.speedKph))} km/h`;
-      const address = props.address
-        ? `<div>${escapeHtml(props.address)}</div>`
-        : "";
-      const circuitsText = props.circuits
-        ? `<div>Circuit${String(props.circuits).includes(",") ? "s" : ""} : ${escapeHtml(props.circuits)}</div>`
-        : "";
-      const updatedAt = props.updatedAt
-        ? fmtUpdated(String(props.updatedAt))
-        : "—";
+      const vehicle = latestDisplayRef.current.find((item) => item.key === key);
+      if (!vehicle) return;
 
-      popupRef.current?.remove();
-      popupRef.current = new mapboxgl.Popup({
-        offset: 24,
-        closeButton: true,
-        closeOnClick: true,
-      })
-        .setLngLat(coordinates)
-        .setHTML(`
-          <div class="fleet-popup">
-            <strong>Unité ${escapeHtml(props.unit)}</strong>
-            <div>${escapeHtml(props.compagnie)} • ${escapeHtml(speed)}</div>
-            ${circuitsText}
-            ${address}
-            <div>GPS : ${escapeHtml(updatedAt)}</div>
-          </div>
-        `)
-        .addTo(map);
+      void calculateRoute(vehicle, {
+        longitude: event.lngLat.lng,
+        latitude: event.lngLat.lat,
+      });
     });
 
     return () => {
-      popupRef.current?.remove();
-      popupRef.current = null;
+      routeAbortRef.current?.abort();
       mapReadyRef.current = false;
       mapRef.current = null;
       map.remove();
     };
-  }, [fitVehicles, syncMapData]);
+  }, [calculateRoute, fitVehicles, selectVehicle, syncMapData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -426,7 +861,7 @@ export default function CarteUnitesPage() {
       try {
         const { data, error: circuitsError } = await circuitSupabase
           .from("circuits_scolaires")
-          .select("circuit, unite, compagnie");
+          .select("circuit, unite, compagnie, nom_conducteur");
 
         if (circuitsError) throw circuitsError;
 
@@ -434,7 +869,7 @@ export default function CarteUnitesPage() {
           setCircuits((data ?? []) as CircuitRow[]);
         }
       } catch (err) {
-        console.error("Erreur chargement circuits pour la recherche", err);
+        console.error("Erreur chargement circuits pour la carte", err);
       }
     };
 
@@ -484,50 +919,182 @@ export default function CarteUnitesPage() {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
+  useEffect(() => {
+    if (!destination || !selectedVehicle) return;
+
+    const timer = window.setInterval(() => {
+      const latest = allDisplayVehicles.find(
+        (item) => item.key === selectedVehicle.key,
+      );
+      const currentDestination = destinationRef.current;
+
+      if (latest && currentDestination) {
+        void calculateRoute(latest, currentDestination);
+      }
+    }, 15000);
+
+    return () => window.clearInterval(timer);
+  }, [
+    destination?.longitude,
+    destination?.latitude,
+    selectedVehicle?.key,
+    allDisplayVehicles,
+    calculateRoute,
+  ]);
+
+  useEffect(() => {
+    const handler = () => {
+      setFullscreen(Boolean(document.fullscreenElement));
+      window.setTimeout(() => mapRef.current?.resize(), 50);
+    };
+
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
+
   const handleCenter = useCallback(() => {
     fitVehicles(displayVehicles, true);
   }, [displayVehicles, fitVehicles]);
 
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await pageRef.current?.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.error("Plein écran impossible", err);
+    }
+  }, []);
+
+  const toggleFollow = useCallback(() => {
+    if (!selectedVehicle) return;
+
+    if (followKey === selectedVehicle.key) {
+      setFollowKey(null);
+      return;
+    }
+
+    setFollowKey(selectedVehicle.key);
+
+    if (validCoordinate(selectedVehicle)) {
+      mapRef.current?.easeTo({
+        center: [
+          Number(selectedVehicle.longitude),
+          Number(selectedVehicle.latitude),
+        ],
+        zoom: Math.max(mapRef.current.getZoom(), 15),
+        duration: 500,
+      });
+    }
+  }, [followKey, selectedVehicle]);
+
+  const statusFilterButton = (
+    value: StatusFilter,
+    label: string,
+    count?: number,
+  ) => (
+    <button
+      type="button"
+      className={`fleet-chip ${statusFilter === value ? "active" : ""}`}
+      onClick={() => setStatusFilter(value)}
+    >
+      {label}
+      {count != null ? <span>{count}</span> : null}
+    </button>
+  );
+
   return (
-    <div className="fleet-page">
+    <div ref={pageRef} className="fleet-page">
       <style>{`
-        .fleet-page { width: 100%; height: 100vh; min-height: 620px; display: flex; flex-direction: column; overflow: hidden; background: #e5e7eb; }
-        .fleet-header { position: relative; z-index: 10; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 18px; background: #ffffff; border-bottom: 1px solid #e5e7eb; }
-        .fleet-header-left { min-width: 190px; }
-        .fleet-title { font-size: 18px; font-weight: 800; color: #0f172a; }
-        .fleet-status { margin-top: 4px; display: flex; align-items: center; gap: 7px; font-size: 12px; color: #64748b; }
-        .fleet-live-dot { width: 8px; height: 8px; border-radius: 999px; background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.15); }
-        .fleet-live-dot.is-error { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,.15); }
-        .fleet-search { flex: 1 1 380px; max-width: 520px; position: relative; }
-        .fleet-search-input { width: 100%; height: 40px; box-sizing: border-box; border: 1px solid #dbe2ea; border-radius: 10px; background: #f8fafc; padding: 0 38px 0 13px; color: #0f172a; font: inherit; font-size: 13px; outline: none; transition: .15s ease; }
-        .fleet-search-input:focus { background: #fff; border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(37,99,235,.10); }
-        .fleet-search-clear { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; border: 0; border-radius: 7px; background: transparent; color: #64748b; cursor: pointer; font-size: 16px; line-height: 1; }
-        .fleet-search-clear:hover { background: #e2e8f0; color: #0f172a; }
-        .fleet-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-        .fleet-filter-group { display: flex; align-items: center; gap: 4px; padding: 4px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 11px; }
-        .fleet-filter { appearance: none; border: 1px solid #dbe2ea; background: #fff; color: #334155; border-radius: 9px; padding: 8px 11px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; transition: .15s ease; white-space: nowrap; }
-        .fleet-filter:hover { background: #f8fafc; border-color: #cbd5e1; }
-        .fleet-filter.active { color: #fff; background: #1d4ed8; border-color: #1d4ed8; }
-        .fleet-filter:disabled { opacity: .5; cursor: default; }
-        .fleet-map-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-        .fleet-map { position: absolute; inset: 0; width: 100%; height: 100%; }
-        .fleet-count { position: absolute; z-index: 5; left: 18px; bottom: 18px; padding: 9px 12px; border-radius: 10px; background: rgba(15,23,42,.88); color: #fff; font-size: 13px; font-weight: 700; box-shadow: 0 5px 18px rgba(15,23,42,.18); }
-        .fleet-popup { min-width: 180px; color: #0f172a; font-size: 13px; line-height: 1.45; }
-        .fleet-popup strong { display: block; margin-bottom: 4px; font-size: 15px; }
-        .mapboxgl-popup-content { border-radius: 10px; padding: 12px 14px; box-shadow: 0 8px 24px rgba(15,23,42,.18); }
-        @media (max-width: 1050px) {
-          .fleet-header { flex-wrap: wrap; }
-          .fleet-search { order: 3; flex-basis: 100%; max-width: none; }
+        .fleet-page { width:100%; height:100vh; min-height:620px; display:flex; flex-direction:column; overflow:hidden; background:#e5e7eb; color:#0f172a; }
+        .fleet-header { flex:0 0 auto; display:flex; align-items:center; gap:14px; padding:12px 16px; background:#fff; border-bottom:1px solid #e2e8f0; z-index:20; }
+        .fleet-title-wrap { min-width:190px; }
+        .fleet-title { font-size:18px; line-height:1.1; font-weight:900; }
+        .fleet-status { margin-top:5px; display:flex; align-items:center; gap:7px; color:#64748b; font-size:12px; }
+        .fleet-live-dot { width:8px; height:8px; border-radius:999px; background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.15); }
+        .fleet-live-dot.is-error { background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.15); }
+        .fleet-search { position:relative; flex:1 1 360px; max-width:520px; }
+        .fleet-search input { width:100%; height:40px; box-sizing:border-box; border:1px solid #dbe2ea; border-radius:10px; background:#f8fafc; padding:0 38px 0 13px; font:inherit; font-size:13px; outline:none; }
+        .fleet-search input:focus { background:#fff; border-color:#93c5fd; box-shadow:0 0 0 3px rgba(37,99,235,.10); }
+        .fleet-search-clear { position:absolute; right:7px; top:50%; transform:translateY(-50%); border:0; background:transparent; width:28px; height:28px; border-radius:7px; color:#64748b; cursor:pointer; font-size:17px; }
+        .fleet-search-clear:hover { background:#e2e8f0; color:#0f172a; }
+        .fleet-header-actions { margin-left:auto; display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+        .fleet-company-group { display:flex; gap:4px; padding:4px; border:1px solid #e2e8f0; background:#f8fafc; border-radius:11px; }
+        .fleet-btn { height:36px; border:1px solid #dbe2ea; background:#fff; color:#334155; border-radius:9px; padding:0 11px; font:inherit; font-size:13px; font-weight:800; cursor:pointer; white-space:nowrap; }
+        .fleet-btn:hover { background:#f8fafc; border-color:#cbd5e1; }
+        .fleet-btn.active { color:#fff; background:#1d4ed8; border-color:#1d4ed8; }
+        .fleet-btn:disabled { opacity:.5; cursor:default; }
+        .fleet-body { flex:1 1 auto; min-height:0; display:flex; overflow:hidden; }
+        .fleet-sidebar { flex:0 0 330px; width:330px; background:#fff; border-right:1px solid #e2e8f0; display:flex; flex-direction:column; min-height:0; transition:width .18s ease, flex-basis .18s ease; }
+        .fleet-sidebar.closed { width:0; flex-basis:0; border-right:0; overflow:hidden; }
+        .fleet-sidebar-head { padding:12px; border-bottom:1px solid #e2e8f0; }
+        .fleet-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
+        .fleet-summary-card { padding:9px 8px; border:1px solid #e2e8f0; border-radius:10px; background:#f8fafc; text-align:center; }
+        .fleet-summary-card strong { display:block; font-size:17px; }
+        .fleet-summary-card span { display:block; margin-top:2px; font-size:10px; color:#64748b; font-weight:700; }
+        .fleet-status-filters { margin-top:10px; display:flex; gap:5px; flex-wrap:wrap; }
+        .fleet-chip { border:1px solid #dbe2ea; background:#fff; border-radius:999px; padding:6px 8px; font:inherit; font-size:11px; font-weight:800; color:#475569; cursor:pointer; display:flex; align-items:center; gap:5px; }
+        .fleet-chip span { min-width:18px; height:18px; padding:0 5px; border-radius:999px; background:#e2e8f0; display:grid; place-items:center; font-size:10px; }
+        .fleet-chip.active { background:#0f172a; color:#fff; border-color:#0f172a; }
+        .fleet-chip.active span { background:rgba(255,255,255,.18); }
+        .fleet-list { flex:1 1 auto; overflow:auto; padding:8px; }
+        .fleet-list-empty { padding:24px 12px; text-align:center; color:#64748b; font-size:13px; }
+        .fleet-row { width:100%; border:1px solid transparent; background:transparent; border-radius:11px; padding:9px 10px; cursor:pointer; text-align:left; display:grid; grid-template-columns:auto 1fr auto; gap:9px; align-items:center; }
+        .fleet-row:hover { background:#f8fafc; }
+        .fleet-row.selected { border-color:#bfdbfe; background:#eff6ff; }
+        .fleet-company-dot { width:11px; height:11px; border-radius:999px; box-shadow:0 0 0 2px #fff,0 0 0 3px #cbd5e1; }
+        .fleet-row-main { min-width:0; }
+        .fleet-row-title { font-weight:900; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .fleet-row-sub { margin-top:2px; color:#64748b; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .fleet-row-speed { font-size:11px; font-weight:800; color:#334155; white-space:nowrap; }
+        .fleet-detail { flex:1 1 auto; overflow:auto; padding:14px; }
+        .fleet-detail-top { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+        .fleet-detail-unit { font-size:22px; font-weight:950; }
+        .fleet-detail-meta { margin-top:3px; color:#64748b; font-size:12px; }
+        .fleet-detail-grid { margin-top:13px; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        .fleet-detail-card { border:1px solid #e2e8f0; border-radius:11px; padding:10px; background:#f8fafc; }
+        .fleet-detail-card span { display:block; color:#64748b; font-size:10px; font-weight:800; text-transform:uppercase; }
+        .fleet-detail-card strong { display:block; margin-top:4px; font-size:15px; }
+        .fleet-section { margin-top:14px; }
+        .fleet-section-title { margin-bottom:5px; color:#64748b; font-size:10px; font-weight:900; text-transform:uppercase; letter-spacing:.04em; }
+        .fleet-section-value { font-size:13px; line-height:1.45; font-weight:700; }
+        .fleet-detail-actions { margin-top:14px; display:flex; gap:7px; flex-wrap:wrap; }
+        .fleet-route-box { margin-top:14px; padding:11px; border:1px solid #bfdbfe; background:#eff6ff; border-radius:11px; }
+        .fleet-route-box strong { display:block; font-size:17px; }
+        .fleet-route-box div { margin-top:3px; color:#475569; font-size:12px; }
+        .fleet-route-help { margin-top:12px; padding:9px 10px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:10px; color:#64748b; font-size:11px; line-height:1.4; }
+        .fleet-map-shell { position:relative; flex:1 1 auto; min-width:0; min-height:0; }
+        .fleet-map { position:absolute; inset:0; width:100%; height:100%; }
+        .fleet-map-tools { position:absolute; left:12px; top:12px; z-index:5; display:flex; gap:6px; }
+        .fleet-map-count { position:absolute; left:12px; bottom:12px; z-index:5; padding:8px 11px; border-radius:10px; background:rgba(15,23,42,.88); color:#fff; font-size:12px; font-weight:800; box-shadow:0 5px 18px rgba(15,23,42,.18); }
+        .fleet-status-badge { display:inline-flex; align-items:center; gap:5px; padding:5px 7px; border-radius:999px; font-size:10px; font-weight:900; }
+        .fleet-status-badge.moving { color:#166534; background:#dcfce7; }
+        .fleet-status-badge.stopped { color:#92400e; background:#fef3c7; }
+        .fleet-status-badge.stale { color:#475569; background:#e2e8f0; }
+        .fleet-following { background:#1d4ed8!important; color:#fff!important; border-color:#1d4ed8!important; }
+        .fleet-error { color:#b91c1c; font-size:11px; margin-top:5px; }
+        .fleet-page:fullscreen { background:#fff; }
+        .mapboxgl-ctrl-group { border-radius:10px!important; overflow:hidden; box-shadow:0 5px 18px rgba(15,23,42,.16)!important; }
+        @media (max-width:1100px) {
+          .fleet-header { flex-wrap:wrap; }
+          .fleet-search { order:3; flex-basis:100%; max-width:none; }
         }
-        @media (max-width: 700px) {
-          .fleet-header { align-items: flex-start; }
-          .fleet-actions { width: 100%; flex-wrap: wrap; }
-          .fleet-filter-group { flex-wrap: wrap; }
+        @media (max-width:800px) {
+          .fleet-sidebar { flex-basis:285px; width:285px; }
+          .fleet-title-wrap { min-width:150px; }
+        }
+        @media (max-width:650px) {
+          .fleet-body { position:relative; }
+          .fleet-sidebar { position:absolute; z-index:15; left:0; top:0; bottom:0; width:min(330px,88vw); flex-basis:auto; box-shadow:8px 0 24px rgba(15,23,42,.18); }
+          .fleet-sidebar.closed { transform:translateX(-105%); width:min(330px,88vw); }
+          .fleet-header-actions { width:100%; margin-left:0; justify-content:flex-start; }
         }
       `}</style>
 
       <div className="fleet-header">
-        <div className="fleet-header-left">
+        <div className="fleet-title-wrap">
           <div className="fleet-title">Carte des unités</div>
           <div className="fleet-status">
             <span className={`fleet-live-dot ${error ? "is-error" : ""}`} />
@@ -536,27 +1103,23 @@ export default function CarteUnitesPage() {
               : refreshing
                 ? "Actualisation…"
                 : `Live • ${
-                    lastRefresh
-                      ? fmtUpdated(lastRefresh.toISOString())
-                      : "connexion…"
+                    lastRefresh ? fmtTime(lastRefresh.toISOString()) : "connexion…"
                   }`}
           </div>
         </div>
 
         <div className="fleet-search">
           <input
-            className="fleet-search-input"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Rechercher une unité ou un circuit..."
-            aria-label="Rechercher par numéro d’unité ou de circuit"
+            placeholder="Rechercher unité, circuit ou conducteur…"
+            aria-label="Rechercher unité, circuit ou conducteur"
           />
           {search && (
             <button
               type="button"
               className="fleet-search-clear"
               onClick={() => setSearch("")}
-              title="Effacer la recherche"
               aria-label="Effacer la recherche"
             >
               ×
@@ -564,13 +1127,13 @@ export default function CarteUnitesPage() {
           )}
         </div>
 
-        <div className="fleet-actions">
-          <div className="fleet-filter-group">
+        <div className="fleet-header-actions">
+          <div className="fleet-company-group">
             {(["ALL", "AB", "AC", "TS"] as const).map((value) => (
               <button
                 key={value}
                 type="button"
-                className={`fleet-filter ${filter === value ? "active" : ""}`}
+                className={`fleet-btn ${filter === value ? "active" : ""}`}
                 onClick={() => setFilter(value)}
               >
                 {value === "ALL" ? "Toutes" : value}
@@ -578,13 +1141,29 @@ export default function CarteUnitesPage() {
             ))}
           </div>
 
-          <button type="button" className="fleet-filter" onClick={handleCenter}>
+          <button
+            type="button"
+            className="fleet-btn"
+            onClick={() => setSidebarOpen((open) => !open)}
+          >
+            {sidebarOpen ? "Masquer liste" : "Afficher liste"}
+          </button>
+
+          <button type="button" className="fleet-btn" onClick={handleCenter}>
             Centrer
           </button>
 
           <button
             type="button"
-            className="fleet-filter"
+            className="fleet-btn"
+            onClick={() => void toggleFullscreen()}
+          >
+            {fullscreen ? "Quitter plein écran" : "Plein écran"}
+          </button>
+
+          <button
+            type="button"
+            className="fleet-btn"
             disabled={refreshing}
             onClick={() => void refresh()}
             title="Actualiser maintenant"
@@ -594,15 +1173,255 @@ export default function CarteUnitesPage() {
         </div>
       </div>
 
-      <div className="fleet-map-wrap">
-        <div ref={mapNode} className="fleet-map" />
+      <div className="fleet-body">
+        <aside className={`fleet-sidebar ${sidebarOpen ? "" : "closed"}`}>
+          {!selectedVehicle ? (
+            <>
+              <div className="fleet-sidebar-head">
+                <div className="fleet-summary">
+                  <div className="fleet-summary-card">
+                    <strong>{counts.moving}</strong>
+                    <span>En mouvement</span>
+                  </div>
+                  <div className="fleet-summary-card">
+                    <strong>{counts.stopped}</strong>
+                    <span>À l’arrêt</span>
+                  </div>
+                  <div className="fleet-summary-card">
+                    <strong>{counts.stale}</strong>
+                    <span>GPS ancien</span>
+                  </div>
+                </div>
 
-        <div className="fleet-count">
-          {loading
-            ? "Chargement…"
-            : `${displayVehicles.length} unité${
-                displayVehicles.length > 1 ? "s" : ""
-              } affichée${displayVehicles.length > 1 ? "s" : ""}`}
+                <div className="fleet-status-filters">
+                  {statusFilterButton("ALL", "Tous", counts.total)}
+                  {statusFilterButton("MOVING", "Mouvement", counts.moving)}
+                  {statusFilterButton("STOPPED", "Arrêt", counts.stopped)}
+                  {statusFilterButton("STALE", "GPS ancien", counts.stale)}
+                </div>
+              </div>
+
+              <div className="fleet-list">
+                {displayVehicles.length === 0 ? (
+                  <div className="fleet-list-empty">
+                    Aucune unité ne correspond aux filtres.
+                  </div>
+                ) : (
+                  displayVehicles.map((vehicle) => (
+                    <button
+                      type="button"
+                      key={vehicle.key}
+                      className={`fleet-row ${
+                        selectedKey === vehicle.key ? "selected" : ""
+                      }`}
+                      onClick={() => selectVehicle(vehicle.key, true)}
+                    >
+                      <span
+                        className="fleet-company-dot"
+                        style={{ background: companyColor[vehicle.compagnie] }}
+                      />
+                      <span className="fleet-row-main">
+                        <span className="fleet-row-title">
+                          Unité {vehicle.unit}
+                          {vehicle.circuits.length
+                            ? ` · Circuit ${vehicle.circuits.join(", ")}`
+                            : ""}
+                        </span>
+                        <span className="fleet-row-sub">
+                          {vehicle.address || statusLabel[vehicle.status]}
+                        </span>
+                      </span>
+                      <span className="fleet-row-speed">
+                        {vehicle.status === "STALE"
+                          ? "Ancien"
+                          : `${Math.round(Number(vehicle.speedKph ?? 0))} km/h`}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="fleet-detail">
+              <div className="fleet-detail-top">
+                <div>
+                  <div className="fleet-detail-unit">
+                    Unité {selectedVehicle.unit}
+                  </div>
+                  <div className="fleet-detail-meta">
+                    {selectedVehicle.compagnie}
+                    {selectedVehicle.circuits.length
+                      ? ` · Circuit ${selectedVehicle.circuits.join(", ")}`
+                      : ""}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className="fleet-btn"
+                  onClick={() => {
+                    setSelectedKey(null);
+                    setFollowKey(null);
+                    clearRoute();
+                  }}
+                >
+                  Retour
+                </button>
+              </div>
+
+              <div style={{ marginTop: 10 }}>
+                <span
+                  className={`fleet-status-badge ${
+                    selectedVehicle.status === "MOVING"
+                      ? "moving"
+                      : selectedVehicle.status === "STOPPED"
+                        ? "stopped"
+                        : "stale"
+                  }`}
+                >
+                  {statusLabel[selectedVehicle.status]}
+                </span>
+              </div>
+
+              <div className="fleet-detail-grid">
+                <div className="fleet-detail-card">
+                  <span>Vitesse</span>
+                  <strong>
+                    {selectedVehicle.speedKph == null
+                      ? "—"
+                      : `${Math.round(selectedVehicle.speedKph)} km/h`}
+                  </strong>
+                </div>
+
+                <div className="fleet-detail-card">
+                  <span>Dernier GPS</span>
+                  <strong>{fmtAge(selectedVehicle.ageSeconds)}</strong>
+                </div>
+
+                {selectedVehicle.batterySocPercent != null && (
+                  <div className="fleet-detail-card">
+                    <span>Batterie</span>
+                    <strong>
+                      {Math.round(selectedVehicle.batterySocPercent)} %
+                    </strong>
+                  </div>
+                )}
+
+                {selectedVehicle.fuelPercent != null && (
+                  <div className="fleet-detail-card">
+                    <span>Carburant</span>
+                    <strong>{Math.round(selectedVehicle.fuelPercent)} %</strong>
+                  </div>
+                )}
+              </div>
+
+              <div className="fleet-section">
+                <div className="fleet-section-title">Adresse</div>
+                <div className="fleet-section-value">
+                  {selectedVehicle.address || "Adresse non disponible"}
+                </div>
+              </div>
+
+              <div className="fleet-section">
+                <div className="fleet-section-title">Conducteur</div>
+                <div className="fleet-section-value">
+                  {selectedVehicle.conducteurs.length
+                    ? selectedVehicle.conducteurs.join(", ")
+                    : "Non assigné"}
+                </div>
+              </div>
+
+              <div className="fleet-section">
+                <div className="fleet-section-title">Position GPS</div>
+                <div className="fleet-section-value">
+                  {fmtTime(selectedVehicle.updatedAt)}
+                  <br />
+                  {Number(selectedVehicle.latitude).toFixed(5)},{" "}
+                  {Number(selectedVehicle.longitude).toFixed(5)}
+                </div>
+              </div>
+
+              <div className="fleet-detail-actions">
+                <button
+                  type="button"
+                  className="fleet-btn"
+                  onClick={() => selectVehicle(selectedVehicle.key, true)}
+                >
+                  Centrer sur l’unité
+                </button>
+
+                <button
+                  type="button"
+                  className={`fleet-btn ${
+                    followKey === selectedVehicle.key ? "fleet-following" : ""
+                  }`}
+                  onClick={toggleFollow}
+                >
+                  {followKey === selectedVehicle.key
+                    ? "Arrêter le suivi"
+                    : "Suivre l’unité"}
+                </button>
+              </div>
+
+              <div className="fleet-route-help">
+                Clic droit sur la carte pour choisir une destination et calculer
+                automatiquement l’heure d’arrivée de cette unité.
+              </div>
+
+              {destination && (
+                <div className="fleet-route-box">
+                  {etaLoading ? (
+                    <div>Calcul de l’itinéraire…</div>
+                  ) : eta ? (
+                    <>
+                      <strong>
+                        {fmtDuration(eta.durationSeconds)} ·{" "}
+                        {fmtDistance(eta.distanceMeters)}
+                      </strong>
+                      <div>Arrivée estimée : {fmtTime(eta.arrivalAt)}</div>
+                    </>
+                  ) : (
+                    <div>Destination sélectionnée.</div>
+                  )}
+
+                  {etaError && <div className="fleet-error">{etaError}</div>}
+
+                  <button
+                    type="button"
+                    className="fleet-btn"
+                    style={{ marginTop: 9 }}
+                    onClick={clearRoute}
+                  >
+                    Effacer la destination
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </aside>
+
+        <div className="fleet-map-shell">
+          <div ref={mapNode} className="fleet-map" />
+
+          {!sidebarOpen && (
+            <div className="fleet-map-tools">
+              <button
+                type="button"
+                className="fleet-btn"
+                onClick={() => setSidebarOpen(true)}
+              >
+                Liste des unités
+              </button>
+            </div>
+          )}
+
+          <div className="fleet-map-count">
+            {loading
+              ? "Chargement…"
+              : `${displayVehicles.length} unité${
+                  displayVehicles.length > 1 ? "s" : ""
+                } affichée${displayVehicles.length > 1 ? "s" : ""}`}
+          </div>
         </div>
       </div>
     </div>
