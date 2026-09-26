@@ -571,6 +571,7 @@ export default function CarteUnitesPage() {
   const lastSocRefreshRef = useRef(0);
   const mapAnimationFrameRef = useRef<number | null>(null);
   const renderedMapVehiclesRef = useRef<DisplayVehicle[]>([]);
+  const userZoomingRef = useRef(false);
   const lastAutoFollowSearchRef = useRef("");
   const manualSearchOverrideRef = useRef(false);
 
@@ -607,12 +608,17 @@ export default function CarteUnitesPage() {
   const [historyError, setHistoryError] = useState("");
   const [historyIndex, setHistoryIndex] = useState(0);
   const [schools, setSchools] = useState<SchoolRow[]>([]);
+  const schoolsRef = useRef<SchoolRow[]>([]);
   const [timelineMode, setTimelineMode] = useState<TimelineMode>("TRIP");
   const [speedingIntervals, setSpeedingIntervals] = useState<SpeedingInterval[]>([]);
   const [speedingLoading, setSpeedingLoading] = useState(false);
   const [speedingError, setSpeedingError] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(30);
+
+  useEffect(() => {
+    schoolsRef.current = schools;
+  }, [schools]);
 
   useEffect(() => {
     selectedKeyRef.current = selectedKey;
@@ -872,9 +878,10 @@ export default function CarteUnitesPage() {
         renderedMapVehiclesRef.current = interpolated;
         source.setData(toGeoJson(interpolated) as any);
 
-        // En mode suivi, la caméra suit exactement le même mouvement fluide.
+        // En mode suivi, la caméra suit le véhicule, MAIS une action
+        // de zoom manuelle a priorité. On ne touche jamais au niveau de zoom.
         const followedKey = followKeyRef.current;
-        if (followedKey) {
+        if (followedKey && !userZoomingRef.current) {
           const followed = interpolated.find(
             (vehicle) => vehicle.key === followedKey,
           );
@@ -1088,6 +1095,34 @@ export default function CarteUnitesPage() {
     mapRef.current = map;
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
 
+    map.on("zoomstart", () => {
+      userZoomingRef.current = true;
+    });
+
+    map.on("zoomend", () => {
+      userZoomingRef.current = false;
+
+      // Après le zoom, on remet seulement le véhicule au centre,
+      // sans modifier le zoom choisi par l'utilisateur.
+      const followedKey = followKeyRef.current;
+      if (!followedKey) return;
+
+      const followed =
+        renderedMapVehiclesRef.current.find(
+          (vehicle) => vehicle.key === followedKey,
+        ) ??
+        latestDisplayRef.current.find(
+          (vehicle) => vehicle.key === followedKey,
+        );
+
+      if (followed && validCoordinate(followed)) {
+        map.setCenter([
+          Number(followed.longitude),
+          Number(followed.latitude),
+        ]);
+      }
+    });
+
     map.on("load", () => {
       mapReadyRef.current = true;
 
@@ -1278,7 +1313,7 @@ export default function CarteUnitesPage() {
 
       map.addSource(SCHOOL_SOURCE_ID, {
         type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
+        data: schoolGeoJson(schoolsRef.current) as any,
       });
 
       map.addLayer({
@@ -1698,7 +1733,17 @@ export default function CarteUnitesPage() {
       const withCoordinates = await geocodeMissingSchools(loaded);
 
       if (!cancelled) {
+        schoolsRef.current = withCoordinates;
         setSchools(withCoordinates);
+
+        const map = mapRef.current;
+        if (map && mapReadyRef.current) {
+          const source = map.getSource(SCHOOL_SOURCE_ID) as
+            | mapboxgl.GeoJSONSource
+            | undefined;
+
+          source?.setData(schoolGeoJson(withCoordinates) as any);
+        }
       }
     };
 
@@ -1710,14 +1755,33 @@ export default function CarteUnitesPage() {
   }, []);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReadyRef.current) return;
+    schoolsRef.current = schools;
 
-    const source = map.getSource(SCHOOL_SOURCE_ID) as
-      | mapboxgl.GeoJSONSource
-      | undefined;
+    const syncSchools = () => {
+      const map = mapRef.current;
+      if (!map || !mapReadyRef.current) return false;
 
-    source?.setData(schoolGeoJson(schools) as any);
+      const source = map.getSource(SCHOOL_SOURCE_ID) as
+        | mapboxgl.GeoJSONSource
+        | undefined;
+
+      if (!source) return false;
+
+      source.setData(schoolGeoJson(schoolsRef.current) as any);
+      return true;
+    };
+
+    if (syncSchools()) return;
+
+    // Si les écoles sont chargées avant le "load" Mapbox, on retente
+    // brièvement afin que la source soit remplie dès qu'elle existe.
+    const timers = [100, 300, 700, 1200].map((delay) =>
+      window.setTimeout(syncSchools, delay),
+    );
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
   }, [schools]);
 
 
