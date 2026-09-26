@@ -130,6 +130,7 @@ const HISTORY_POINT_LAYER_ID = "fleet-history-point-layer";
 
 const SCHOOL_SOURCE_ID = "fleet-school-source";
 const SCHOOL_POINT_LAYER_ID = "fleet-school-points";
+const SCHOOL_INNER_LAYER_ID = "fleet-school-inner";
 const SCHOOL_LABEL_LAYER_ID = "fleet-school-labels";
 
 const VIEW_STORAGE_KEY = "gb-circuits-fleet-view-v2";
@@ -1154,16 +1155,16 @@ export default function CarteUnitesPage() {
             ["linear"],
             ["zoom"],
             7,
-            8,
+            6,
             12,
-            11,
+            8,
             16,
-            13,
+            9,
           ],
           "circle-color": ["get", "color"],
           "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 3,
-          "circle-opacity": ["get", "opacity"],
+          "circle-stroke-width": 2,
+          "circle-opacity": 1,
         },
       });
 
@@ -1284,21 +1285,25 @@ export default function CarteUnitesPage() {
         id: SCHOOL_POINT_LAYER_ID,
         type: "circle",
         source: SCHOOL_SOURCE_ID,
-        minzoom: 9,
+        minzoom: 8,
         paint: {
           "circle-radius": [
             "interpolate",
             ["linear"],
             ["zoom"],
+            8,
+            7,
+            11,
             9,
-            4,
             14,
-            6,
+            11,
+            17,
+            13,
           ],
-          "circle-color": "#0f766e",
+          "circle-color": "#7c3aed",
           "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 2,
-          "circle-opacity": 0.95,
+          "circle-stroke-width": 3,
+          "circle-opacity": 1,
         },
       });
 
@@ -1306,23 +1311,62 @@ export default function CarteUnitesPage() {
         id: SCHOOL_LABEL_LAYER_ID,
         type: "symbol",
         source: SCHOOL_SOURCE_ID,
-        minzoom: 10.5,
+        minzoom: 9,
         layout: {
-          "text-field": ["get", "nom"],
-          "text-size": 11,
-          "text-offset": [0, 1.2],
+          "text-field": ["concat", "ÉCOLE · ", ["get", "nom"]],
+          "text-size": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            9,
+            10,
+            12,
+            12,
+            16,
+            14,
+          ],
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-offset": [0, 1.55],
           "text-anchor": "top",
           "text-allow-overlap": false,
           "text-ignore-placement": false,
+          "text-padding": 4,
         },
         paint: {
-          "text-color": "#134e4a",
+          "text-color": "#4c1d95",
           "text-halo-color": "#ffffff",
-          "text-halo-width": 2,
+          "text-halo-width": 3,
+          "text-halo-blur": 0.4,
         },
       });
 
-      map.on("click", SCHOOL_POINT_LAYER_ID, (event) => {
+      map.addLayer({
+        id: SCHOOL_INNER_LAYER_ID,
+        type: "circle",
+        source: SCHOOL_SOURCE_ID,
+        minzoom: 8,
+        paint: {
+          "circle-radius": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            8,
+            2.5,
+            12,
+            3.5,
+            16,
+            4.5,
+          ],
+          "circle-color": "#ffffff",
+          "circle-stroke-color": "#7c3aed",
+          "circle-stroke-width": 1.5,
+          "circle-opacity": 1,
+        },
+      });
+
+      const showSchoolPopup = (event: mapboxgl.MapMouseEvent & {
+        features?: mapboxgl.MapboxGeoJSONFeature[];
+      }) => {
         const feature = event.features?.[0] as any;
         if (!feature) return;
 
@@ -1349,14 +1393,19 @@ export default function CarteUnitesPage() {
           .setLngLat(coordinates)
           .setDOMContent(wrapper)
           .addTo(map);
-      });
+      };
 
-      map.on("mouseenter", SCHOOL_POINT_LAYER_ID, () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
+      map.on("click", SCHOOL_POINT_LAYER_ID, showSchoolPopup);
+      map.on("click", SCHOOL_INNER_LAYER_ID, showSchoolPopup);
 
-      map.on("mouseleave", SCHOOL_POINT_LAYER_ID, () => {
-        map.getCanvas().style.cursor = "";
+      [SCHOOL_POINT_LAYER_ID, SCHOOL_INNER_LAYER_ID].forEach((layerId) => {
+        map.on("mouseenter", layerId, () => {
+          map.getCanvas().style.cursor = "pointer";
+        });
+
+        map.on("mouseleave", layerId, () => {
+          map.getCanvas().style.cursor = "";
+        });
       });
 
       map.addSource(HISTORY_SOURCE_ID, {
