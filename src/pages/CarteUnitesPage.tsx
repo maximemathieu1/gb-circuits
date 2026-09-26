@@ -55,14 +55,15 @@ type EtaInfo = {
 };
 
 const REFRESH_MS = 5000;
+const SOC_REFRESH_MS = 30000;
 const STALE_AFTER_SECONDS = 180;
 
 const SOURCE_ID = "fleet-source";
 const CLUSTER_LAYER_ID = "fleet-clusters";
 const CLUSTER_COUNT_LAYER_ID = "fleet-cluster-count";
-const CIRCLE_LAYER_ID = "fleet-circles";
+const CIRCLE_LAYER_ID = "fleet-stopped-circles";
 const LABEL_LAYER_ID = "fleet-labels";
-const HEADING_LAYER_ID = "fleet-headings";
+const HEADING_LAYER_ID = "fleet-moving-triangles";
 
 const ROUTE_SOURCE_ID = "fleet-route-source";
 const ROUTE_LAYER_ID = "fleet-route-layer";
@@ -89,6 +90,12 @@ function companyCode(value: string): Compagnie {
   if (value === "Autobus Champagne") return "AC";
   if (value === "Transport Sécuritaire") return "TS";
   return "AB";
+}
+
+function companyFullName(value: Compagnie) {
+  if (value === "AC") return "Autobus Champagne";
+  if (value === "TS") return "Transport Sécuritaire";
+  return "Autobus Breton";
 }
 
 function fmtTime(value: string | null) {
@@ -196,6 +203,7 @@ function toGeoJson(items: DisplayVehicle[]) {
         updatedAt: vehicle.updatedAt ?? "",
         circuits: vehicle.circuits.join(", "),
         conducteurs: vehicle.conducteurs.join(", "),
+        batterySocPercent: vehicle.batterySocPercent ?? null,
         status: vehicle.status,
         opacity: vehicle.status === "STALE" ? 0.52 : 0.96,
       },
@@ -220,6 +228,8 @@ export default function CarteUnitesPage() {
   const destinationRef = useRef<Destination | null>(null);
   const routeAbortRef = useRef<AbortController | null>(null);
   const routeRequestIdRef = useRef(0);
+  const socBusyRef = useRef(false);
+  const lastSocRefreshRef = useRef(0);
 
   const [vehicles, setVehicles] = useState<Record<string, LiveVehicle>>({});
   const [circuits, setCircuits] = useState<CircuitRow[]>([]);
@@ -669,27 +679,26 @@ export default function CarteUnitesPage() {
         id: CIRCLE_LAYER_ID,
         type: "circle",
         source: SOURCE_ID,
-        filter: ["!", ["has", "point_count"]],
+        filter: [
+          "all",
+          ["!", ["has", "point_count"]],
+          ["!=", ["get", "status"], "MOVING"],
+        ],
         paint: {
           "circle-radius": [
             "interpolate",
             ["linear"],
             ["zoom"],
             7,
-            11,
+            7,
             12,
-            15,
+            9,
             16,
-            18,
+            11,
           ],
           "circle-color": ["get", "color"],
-          "circle-stroke-color": [
-            "case",
-            ["==", ["get", "status"], "STALE"],
-            "#64748b",
-            "#ffffff",
-          ],
-          "circle-stroke-width": 3,
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2,
           "circle-opacity": ["get", "opacity"],
         },
       });
@@ -708,17 +717,40 @@ export default function CarteUnitesPage() {
             7,
             8,
             12,
-            10,
+            9,
             16,
-            11,
+            10,
           ],
           "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
           "text-anchor": "center",
+          "text-offset": [
+            "case",
+            ["==", ["get", "status"], "MOVING"],
+            ["literal", [0, 1.65]],
+            ["literal", [0, 0]],
+          ],
           "text-allow-overlap": true,
           "text-ignore-placement": true,
         },
         paint: {
-          "text-color": "#ffffff",
+          "text-color": [
+            "case",
+            ["==", ["get", "status"], "MOVING"],
+            ["get", "color"],
+            "#ffffff",
+          ],
+          "text-halo-color": [
+            "case",
+            ["==", ["get", "status"], "MOVING"],
+            "#ffffff",
+            "rgba(255,255,255,0)",
+          ],
+          "text-halo-width": [
+            "case",
+            ["==", ["get", "status"], "MOVING"],
+            1.5,
+            0,
+          ],
         },
       });
 
@@ -726,11 +758,24 @@ export default function CarteUnitesPage() {
         id: HEADING_LAYER_ID,
         type: "symbol",
         source: SOURCE_ID,
-        filter: ["!", ["has", "point_count"]],
+        filter: [
+          "all",
+          ["!", ["has", "point_count"]],
+          ["==", ["get", "status"], "MOVING"],
+        ],
         layout: {
           "text-field": "▲",
-          "text-size": 14,
-          "text-offset": [0, -1.85],
+          "text-size": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            7,
+            15,
+            12,
+            18,
+            16,
+            21,
+          ],
           "text-rotate": ["get", "heading"],
           "text-rotation-alignment": "map",
           "text-allow-overlap": true,
@@ -739,7 +784,7 @@ export default function CarteUnitesPage() {
         paint: {
           "text-color": ["get", "color"],
           "text-halo-color": "#ffffff",
-          "text-halo-width": 1.5,
+          "text-halo-width": 2,
           "text-opacity": ["get", "opacity"],
         },
       });
@@ -838,6 +883,13 @@ export default function CarteUnitesPage() {
       selectVehicle(key, false);
     });
 
+    map.on("click", HEADING_LAYER_ID, (event) => {
+      const feature = event.features?.[0] as any;
+      const key = String(feature?.properties?.key ?? "");
+      if (!key) return;
+      selectVehicle(key, false);
+    });
+
     map.on("mouseenter", CLUSTER_LAYER_ID, () => {
       map.getCanvas().style.cursor = "pointer";
     });
@@ -851,6 +903,14 @@ export default function CarteUnitesPage() {
     });
 
     map.on("mouseleave", CIRCLE_LAYER_ID, () => {
+      map.getCanvas().style.cursor = "";
+    });
+
+    map.on("mouseenter", HEADING_LAYER_ID, () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+
+    map.on("mouseleave", HEADING_LAYER_ID, () => {
       map.getCanvas().style.cursor = "";
     });
 
@@ -904,6 +964,73 @@ export default function CarteUnitesPage() {
     };
   }, []);
 
+  const refreshSoc = useCallback(
+    async (baseVehicles: Record<string, LiveVehicle>, force = false) => {
+      const now = Date.now();
+
+      if (socBusyRef.current) return;
+      if (!force && now - lastSocRefreshRef.current < SOC_REFRESH_MS) return;
+
+      const requested = Object.entries(baseVehicles)
+        .map(([key, vehicle]) => {
+          const prefix = key.split("::")[0] as Compagnie;
+          const unit = String(vehicle.unit ?? "").trim();
+
+          if (!unit || !["AB", "AC", "TS"].includes(prefix)) return null;
+
+          return {
+            unit,
+            compagnie: companyFullName(prefix),
+          };
+        })
+        .filter(Boolean);
+
+      if (requested.length === 0) return;
+
+      socBusyRef.current = true;
+
+      try {
+        const { data, error: socError } =
+          await circuitSupabase.functions.invoke("circuit-samsara-live", {
+            body: { vehicles: requested },
+          });
+
+        if (socError) throw socError;
+        if (data?.ok === false) {
+          throw new Error(data?.error || "Lecture SOC impossible.");
+        }
+
+        const enriched =
+          data?.vehicles && typeof data.vehicles === "object"
+            ? (data.vehicles as Record<string, LiveVehicle>)
+            : {};
+
+        setVehicles((current) => {
+          const next = { ...current };
+
+          for (const [key, live] of Object.entries(enriched)) {
+            if (!next[key]) continue;
+
+            next[key] = {
+              ...next[key],
+              batterySocPercent:
+                live.batterySocPercent ?? next[key].batterySocPercent ?? null,
+            };
+          }
+
+          return next;
+        });
+
+        lastSocRefreshRef.current = Date.now();
+      } catch (err) {
+        console.warn("SOC Samsara non disponible sur la carte", err);
+      } finally {
+        socBusyRef.current = false;
+      }
+    },
+    [],
+  );
+
   const refresh = useCallback(async () => {
     if (busyRef.current) return;
     busyRef.current = true;
@@ -925,7 +1052,21 @@ export default function CarteUnitesPage() {
           ? (data.vehicles as Record<string, LiveVehicle>)
           : {};
 
-      setVehicles(nextVehicles);
+      setVehicles((current) => {
+        const next: Record<string, LiveVehicle> = {};
+
+        for (const [key, live] of Object.entries(nextVehicles)) {
+          next[key] = {
+            ...live,
+            batterySocPercent:
+              live.batterySocPercent ?? current[key]?.batterySocPercent ?? null,
+          };
+        }
+
+        return next;
+      });
+
+      void refreshSoc(nextVehicles);
       setLastRefresh(new Date());
       setError("");
     } catch (err: any) {
@@ -935,7 +1076,7 @@ export default function CarteUnitesPage() {
       setRefreshing(false);
       setLoading(false);
     }
-  }, []);
+  }, [refreshSoc]);
 
   useEffect(() => {
     void refresh();
@@ -1339,7 +1480,7 @@ export default function CarteUnitesPage() {
 
                 {selectedVehicle.batterySocPercent != null && (
                   <div className="fleet-detail-card">
-                    <span>État de charge</span>
+                    <span>État de charge (SOC)</span>
                     <strong>
                       {Math.round(selectedVehicle.batterySocPercent)} %
                     </strong>
@@ -1370,10 +1511,8 @@ export default function CarteUnitesPage() {
                         <div
                           key={`${contact.nom}-${contact.telephone}-${index}`}
                           style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            gap: 10,
+                            display: "grid",
+                            gap: 3,
                           }}
                         >
                           <span>{contact.nom || "Conducteur"}</span>
@@ -1384,7 +1523,7 @@ export default function CarteUnitesPage() {
                                 color: "#1d4ed8",
                                 fontWeight: 900,
                                 textDecoration: "none",
-                                whiteSpace: "nowrap",
+                                width: "fit-content",
                               }}
                               title={`Appeler ${contact.nom || "le conducteur"}`}
                             >
