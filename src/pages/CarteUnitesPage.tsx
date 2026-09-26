@@ -5,7 +5,6 @@ import { circuitSupabase } from "../lib/circuitSupabase";
 
 type Compagnie = "AB" | "AC" | "TS";
 type Filter = "ALL" | Compagnie;
-type StatusFilter = "ALL" | "MOVING" | "STOPPED" | "STALE";
 type VehicleStatus = "MOVING" | "STOPPED" | "STALE";
 
 type LiveVehicle = {
@@ -71,12 +70,6 @@ const companyColor: Record<Compagnie, string> = {
   AB: "#2563eb",
   AC: "#f59e0b",
   TS: "#16a34a",
-};
-
-const statusLabel: Record<VehicleStatus, string> = {
-  MOVING: "En mouvement",
-  STOPPED: "À l’arrêt",
-  STALE: "GPS ancien",
 };
 
 function normalizeText(value: unknown) {
@@ -222,7 +215,6 @@ export default function CarteUnitesPage() {
   const [vehicles, setVehicles] = useState<Record<string, LiveVehicle>>({});
   const [circuits, setCircuits] = useState<CircuitRow[]>([]);
   const [filter, setFilter] = useState<Filter>("ALL");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -324,8 +316,6 @@ export default function CarteUnitesPage() {
 
     return allDisplayVehicles.filter((vehicle) => {
       if (filter !== "ALL" && vehicle.compagnie !== filter) return false;
-      if (statusFilter !== "ALL" && vehicle.status !== statusFilter) return false;
-
       if (!q) return true;
 
       return (
@@ -334,21 +324,18 @@ export default function CarteUnitesPage() {
         vehicle.conducteurs.some((name) => normalizeText(name).includes(q))
       );
     });
-  }, [allDisplayVehicles, filter, statusFilter, search]);
+  }, [allDisplayVehicles, filter, search]);
 
   const selectedVehicle = useMemo(() => {
     if (!selectedKey) return null;
     return allDisplayVehicles.find((vehicle) => vehicle.key === selectedKey) ?? null;
   }, [allDisplayVehicles, selectedKey]);
 
-  const counts = useMemo(() => {
-    return {
-      total: allDisplayVehicles.length,
-      moving: allDisplayVehicles.filter((v) => v.status === "MOVING").length,
-      stopped: allDisplayVehicles.filter((v) => v.status === "STOPPED").length,
-      stale: allDisplayVehicles.filter((v) => v.status === "STALE").length,
-    };
-  }, [allDisplayVehicles]);
+  const mapVehicles = useMemo(() => {
+    if (!followKey) return displayVehicles;
+    const followed = allDisplayVehicles.find((vehicle) => vehicle.key === followKey);
+    return followed ? [followed] : [];
+  }, [displayVehicles, allDisplayVehicles, followKey]);
 
   const fitVehicles = useCallback((items: DisplayVehicle[], animate = true) => {
     const map = mapRef.current;
@@ -537,8 +524,8 @@ export default function CarteUnitesPage() {
   );
 
   useEffect(() => {
-    latestDisplayRef.current = displayVehicles;
-    syncMapData(displayVehicles);
+    latestDisplayRef.current = allDisplayVehicles;
+    syncMapData(mapVehicles);
 
     if (
       !firstFitDoneRef.current &&
@@ -559,7 +546,7 @@ export default function CarteUnitesPage() {
         });
       }
     }
-  }, [displayVehicles, allDisplayVehicles, fitVehicles, syncMapData]);
+  }, [mapVehicles, displayVehicles, allDisplayVehicles, fitVehicles, syncMapData]);
 
   useEffect(() => {
     const token =
@@ -952,6 +939,28 @@ export default function CarteUnitesPage() {
     return () => document.removeEventListener("fullscreenchange", handler);
   }, []);
 
+  useEffect(() => {
+    const node = mapNode.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      mapRef.current?.resize();
+    });
+
+    observer.observe(node);
+
+    return () => observer.disconnect();
+  }, []);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen((open) => !open);
+
+    // Mapbox doit recalculer sa largeur pendant/après l'animation du panneau.
+    window.requestAnimationFrame(() => mapRef.current?.resize());
+    window.setTimeout(() => mapRef.current?.resize(), 80);
+    window.setTimeout(() => mapRef.current?.resize(), 220);
+  }, []);
+
   const handleCenter = useCallback(() => {
     fitVehicles(displayVehicles, true);
   }, [displayVehicles, fitVehicles]);
@@ -990,20 +999,7 @@ export default function CarteUnitesPage() {
     }
   }, [followKey, selectedVehicle]);
 
-  const statusFilterButton = (
-    value: StatusFilter,
-    label: string,
-    count?: number,
-  ) => (
-    <button
-      type="button"
-      className={`fleet-chip ${statusFilter === value ? "active" : ""}`}
-      onClick={() => setStatusFilter(value)}
-    >
-      {label}
-      {count != null ? <span>{count}</span> : null}
-    </button>
-  );
+
 
   return (
     <div ref={pageRef} className="fleet-page">
@@ -1026,30 +1022,30 @@ export default function CarteUnitesPage() {
         .fleet-btn:hover { background:#f8fafc; border-color:#cbd5e1; }
         .fleet-btn.active { color:#fff; background:#1d4ed8; border-color:#1d4ed8; }
         .fleet-btn:disabled { opacity:.5; cursor:default; }
-        .fleet-body { flex:1 1 auto; min-height:0; display:flex; overflow:hidden; }
-        .fleet-sidebar { flex:0 0 330px; width:330px; background:#fff; border-right:1px solid #e2e8f0; display:flex; flex-direction:column; min-height:0; transition:width .18s ease, flex-basis .18s ease; }
-        .fleet-sidebar.closed { width:0; flex-basis:0; border-right:0; overflow:hidden; }
-        .fleet-sidebar-head { padding:12px; border-bottom:1px solid #e2e8f0; }
-        .fleet-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
-        .fleet-summary-card { padding:9px 8px; border:1px solid #e2e8f0; border-radius:10px; background:#f8fafc; text-align:center; }
-        .fleet-summary-card strong { display:block; font-size:17px; }
-        .fleet-summary-card span { display:block; margin-top:2px; font-size:10px; color:#64748b; font-weight:700; }
-        .fleet-status-filters { margin-top:10px; display:flex; gap:5px; flex-wrap:wrap; }
-        .fleet-chip { border:1px solid #dbe2ea; background:#fff; border-radius:999px; padding:6px 8px; font:inherit; font-size:11px; font-weight:800; color:#475569; cursor:pointer; display:flex; align-items:center; gap:5px; }
-        .fleet-chip span { min-width:18px; height:18px; padding:0 5px; border-radius:999px; background:#e2e8f0; display:grid; place-items:center; font-size:10px; }
-        .fleet-chip.active { background:#0f172a; color:#fff; border-color:#0f172a; }
-        .fleet-chip.active span { background:rgba(255,255,255,.18); }
-        .fleet-list { flex:1 1 auto; overflow:auto; padding:8px; }
+        .fleet-body { position:relative; flex:1 1 auto; min-height:0; display:flex; overflow:hidden; }
+        .fleet-sidebar { position:relative; flex:0 0 380px; width:380px; background:#fff; border-right:1px solid #e2e8f0; display:flex; flex-direction:column; min-height:0; overflow:hidden; transition:width .18s ease, flex-basis .18s ease; }
+        .fleet-sidebar.closed { width:0; flex-basis:0; border-right:0; }
+        .fleet-sidebar-toggle { position:absolute; z-index:25; top:50%; left:366px; transform:translateY(-50%); width:28px; height:56px; border:1px solid #cbd5e1; border-left:0; border-radius:0 12px 12px 0; background:#fff; color:#334155; box-shadow:3px 0 10px rgba(15,23,42,.12); display:grid; place-items:center; cursor:pointer; font-size:20px; font-weight:900; transition:left .18s ease, background .15s ease; }
+        .fleet-sidebar-toggle:hover { background:#f8fafc; }
+        .fleet-sidebar-toggle.closed { left:0; }
+        .fleet-sidebar-toggle span { display:block; line-height:1; transform:translateX(-1px); }
+        .fleet-sidebar-toggle.closed span { transform:translateX(1px); }
+        .fleet-sidebar-head { padding:12px 14px; border-bottom:1px solid #e2e8f0; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .fleet-sidebar-count { font-size:15px; font-weight:900; }
+        .fleet-sidebar-count span { color:#64748b; font-size:12px; font-weight:700; margin-left:4px; }
+        .fleet-battery { display:inline-flex; align-items:center; gap:4px; color:#166534; background:#dcfce7; border-radius:999px; padding:4px 7px; font-size:10px; font-weight:900; white-space:nowrap; }
+                .fleet-list { flex:1 1 auto; overflow:auto; padding:8px; }
         .fleet-list-empty { padding:24px 12px; text-align:center; color:#64748b; font-size:13px; }
-        .fleet-row { width:100%; border:1px solid transparent; background:transparent; border-radius:11px; padding:9px 10px; cursor:pointer; text-align:left; display:grid; grid-template-columns:auto 1fr auto; gap:9px; align-items:center; }
+        .fleet-row { width:100%; border:1px solid transparent; background:transparent; border-radius:12px; padding:10px 11px; cursor:pointer; text-align:left; display:grid; grid-template-columns:auto minmax(0,1fr); gap:10px; align-items:start; }
         .fleet-row:hover { background:#f8fafc; }
         .fleet-row.selected { border-color:#bfdbfe; background:#eff6ff; }
-        .fleet-company-dot { width:11px; height:11px; border-radius:999px; box-shadow:0 0 0 2px #fff,0 0 0 3px #cbd5e1; }
+        .fleet-company-dot { width:11px; height:11px; margin-top:5px; border-radius:999px; box-shadow:0 0 0 2px #fff,0 0 0 3px #cbd5e1; }
         .fleet-row-main { min-width:0; }
-        .fleet-row-title { font-weight:900; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .fleet-row-sub { margin-top:2px; color:#64748b; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .fleet-row-speed { font-size:11px; font-weight:800; color:#334155; white-space:nowrap; }
-        .fleet-detail { flex:1 1 auto; overflow:auto; padding:14px; }
+        .fleet-row-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .fleet-row-title { min-width:0; font-weight:900; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .fleet-row-circuit { margin-top:2px; color:#334155; font-size:11px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .fleet-row-sub { margin-top:3px; color:#64748b; font-size:11px; line-height:1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+                .fleet-detail { flex:1 1 auto; overflow:auto; padding:14px; }
         .fleet-detail-top { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
         .fleet-detail-unit { font-size:22px; font-weight:950; }
         .fleet-detail-meta { margin-top:3px; color:#64748b; font-size:12px; }
@@ -1065,15 +1061,10 @@ export default function CarteUnitesPage() {
         .fleet-route-box strong { display:block; font-size:17px; }
         .fleet-route-box div { margin-top:3px; color:#475569; font-size:12px; }
         .fleet-route-help { margin-top:12px; padding:9px 10px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:10px; color:#64748b; font-size:11px; line-height:1.4; }
-        .fleet-map-shell { position:relative; flex:1 1 auto; min-width:0; min-height:0; }
+        .fleet-map-shell { position:relative; flex:1 1 0; width:0; min-width:0; min-height:0; overflow:hidden; }
         .fleet-map { position:absolute; inset:0; width:100%; height:100%; }
-        .fleet-map-tools { position:absolute; left:12px; top:12px; z-index:5; display:flex; gap:6px; }
         .fleet-map-count { position:absolute; left:12px; bottom:12px; z-index:5; padding:8px 11px; border-radius:10px; background:rgba(15,23,42,.88); color:#fff; font-size:12px; font-weight:800; box-shadow:0 5px 18px rgba(15,23,42,.18); }
-        .fleet-status-badge { display:inline-flex; align-items:center; gap:5px; padding:5px 7px; border-radius:999px; font-size:10px; font-weight:900; }
-        .fleet-status-badge.moving { color:#166534; background:#dcfce7; }
-        .fleet-status-badge.stopped { color:#92400e; background:#fef3c7; }
-        .fleet-status-badge.stale { color:#475569; background:#e2e8f0; }
-        .fleet-following { background:#1d4ed8!important; color:#fff!important; border-color:#1d4ed8!important; }
+                .fleet-following { background:#1d4ed8!important; color:#fff!important; border-color:#1d4ed8!important; }
         .fleet-error { color:#b91c1c; font-size:11px; margin-top:5px; }
         .fleet-page:fullscreen { background:#fff; }
         .mapboxgl-ctrl-group { border-radius:10px!important; overflow:hidden; box-shadow:0 5px 18px rgba(15,23,42,.16)!important; }
@@ -1082,13 +1073,14 @@ export default function CarteUnitesPage() {
           .fleet-search { order:3; flex-basis:100%; max-width:none; }
         }
         @media (max-width:800px) {
-          .fleet-sidebar { flex-basis:285px; width:285px; }
+          .fleet-sidebar { flex-basis:340px; width:340px; }
           .fleet-title-wrap { min-width:150px; }
         }
         @media (max-width:650px) {
-          .fleet-body { position:relative; }
-          .fleet-sidebar { position:absolute; z-index:15; left:0; top:0; bottom:0; width:min(330px,88vw); flex-basis:auto; box-shadow:8px 0 24px rgba(15,23,42,.18); }
-          .fleet-sidebar.closed { transform:translateX(-105%); width:min(330px,88vw); }
+          .fleet-sidebar { flex-basis:min(380px,90vw); width:min(380px,90vw); }
+          .fleet-sidebar.closed { flex-basis:0; width:0; }
+          .fleet-sidebar-toggle { left:calc(min(380px,90vw) - 14px); }
+          .fleet-sidebar-toggle.closed { left:0; }
           .fleet-header-actions { width:100%; margin-left:0; justify-content:flex-start; }
         }
       `}</style>
@@ -1141,14 +1133,6 @@ export default function CarteUnitesPage() {
             ))}
           </div>
 
-          <button
-            type="button"
-            className="fleet-btn"
-            onClick={() => setSidebarOpen((open) => !open)}
-          >
-            {sidebarOpen ? "Masquer liste" : "Afficher liste"}
-          </button>
-
           <button type="button" className="fleet-btn" onClick={handleCenter}>
             Centrer
           </button>
@@ -1178,26 +1162,11 @@ export default function CarteUnitesPage() {
           {!selectedVehicle ? (
             <>
               <div className="fleet-sidebar-head">
-                <div className="fleet-summary">
-                  <div className="fleet-summary-card">
-                    <strong>{counts.moving}</strong>
-                    <span>En mouvement</span>
-                  </div>
-                  <div className="fleet-summary-card">
-                    <strong>{counts.stopped}</strong>
-                    <span>À l’arrêt</span>
-                  </div>
-                  <div className="fleet-summary-card">
-                    <strong>{counts.stale}</strong>
-                    <span>GPS ancien</span>
-                  </div>
-                </div>
-
-                <div className="fleet-status-filters">
-                  {statusFilterButton("ALL", "Tous", counts.total)}
-                  {statusFilterButton("MOVING", "Mouvement", counts.moving)}
-                  {statusFilterButton("STOPPED", "Arrêt", counts.stopped)}
-                  {statusFilterButton("STALE", "GPS ancien", counts.stale)}
+                <div className="fleet-sidebar-count">
+                  {displayVehicles.length}
+                  <span>
+                    unité{displayVehicles.length > 1 ? "s" : ""}
+                  </span>
                 </div>
               </div>
 
@@ -1221,20 +1190,26 @@ export default function CarteUnitesPage() {
                         style={{ background: companyColor[vehicle.compagnie] }}
                       />
                       <span className="fleet-row-main">
-                        <span className="fleet-row-title">
-                          Unité {vehicle.unit}
-                          {vehicle.circuits.length
-                            ? ` · Circuit ${vehicle.circuits.join(", ")}`
-                            : ""}
+                        <span className="fleet-row-top">
+                          <span className="fleet-row-title">
+                            Unité {vehicle.unit}
+                          </span>
+                          {vehicle.batterySocPercent != null && (
+                            <span className="fleet-battery">
+                              🔋 {Math.round(vehicle.batterySocPercent)} %
+                            </span>
+                          )}
                         </span>
+
+                        {vehicle.circuits.length > 0 && (
+                          <span className="fleet-row-circuit">
+                            Circuit {vehicle.circuits.join(", ")}
+                          </span>
+                        )}
+
                         <span className="fleet-row-sub">
-                          {vehicle.address || statusLabel[vehicle.status]}
+                          {vehicle.address || "Adresse non disponible"}
                         </span>
-                      </span>
-                      <span className="fleet-row-speed">
-                        {vehicle.status === "STALE"
-                          ? "Ancien"
-                          : `${Math.round(Number(vehicle.speedKph ?? 0))} km/h`}
                       </span>
                     </button>
                   ))
@@ -1269,20 +1244,6 @@ export default function CarteUnitesPage() {
                 </button>
               </div>
 
-              <div style={{ marginTop: 10 }}>
-                <span
-                  className={`fleet-status-badge ${
-                    selectedVehicle.status === "MOVING"
-                      ? "moving"
-                      : selectedVehicle.status === "STOPPED"
-                        ? "stopped"
-                        : "stale"
-                  }`}
-                >
-                  {statusLabel[selectedVehicle.status]}
-                </span>
-              </div>
-
               <div className="fleet-detail-grid">
                 <div className="fleet-detail-card">
                   <span>Vitesse</span>
@@ -1300,7 +1261,7 @@ export default function CarteUnitesPage() {
 
                 {selectedVehicle.batterySocPercent != null && (
                   <div className="fleet-detail-card">
-                    <span>Batterie</span>
+                    <span>État de charge</span>
                     <strong>
                       {Math.round(selectedVehicle.batterySocPercent)} %
                     </strong>
@@ -1400,27 +1361,27 @@ export default function CarteUnitesPage() {
           )}
         </aside>
 
+        <button
+          type="button"
+          className={`fleet-sidebar-toggle ${sidebarOpen ? "" : "closed"}`}
+          onClick={toggleSidebar}
+          title={sidebarOpen ? "Masquer la liste" : "Afficher la liste"}
+          aria-label={sidebarOpen ? "Masquer la liste" : "Afficher la liste"}
+        >
+          <span>{sidebarOpen ? "‹" : "›"}</span>
+        </button>
+
         <div className="fleet-map-shell">
           <div ref={mapNode} className="fleet-map" />
-
-          {!sidebarOpen && (
-            <div className="fleet-map-tools">
-              <button
-                type="button"
-                className="fleet-btn"
-                onClick={() => setSidebarOpen(true)}
-              >
-                Liste des unités
-              </button>
-            </div>
-          )}
 
           <div className="fleet-map-count">
             {loading
               ? "Chargement…"
-              : `${displayVehicles.length} unité${
-                  displayVehicles.length > 1 ? "s" : ""
-                } affichée${displayVehicles.length > 1 ? "s" : ""}`}
+              : followKey
+                ? `Suivi de l’unité ${selectedVehicle?.unit ?? ""}`
+                : `${displayVehicles.length} unité${
+                    displayVehicles.length > 1 ? "s" : ""
+                  } affichée${displayVehicles.length > 1 ? "s" : ""}`}
           </div>
         </div>
       </div>
