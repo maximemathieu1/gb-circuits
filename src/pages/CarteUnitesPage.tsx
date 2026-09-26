@@ -165,30 +165,6 @@ function fmtDuration(seconds: number) {
 function validCoordinate(vehicle: Pick<DisplayVehicle, "latitude" | "longitude">) {
   const lat = Number(vehicle.latitude);
   const lng = Number(vehicle.longitude);
-  const toggleHistory = useCallback(() => {
-    if (!selectedVehicle) return;
-
-    if (historyOpen) {
-      setHistoryOpen(false);
-      clearHistoryMap();
-      return;
-    }
-
-    setFollowKey(null);
-    clearRoute();
-    setHistoryStart("06:00");
-    setHistoryEnd("18:00");
-    setHistoryOpen(true);
-  }, [clearHistoryMap, clearRoute, historyOpen, selectedVehicle]);
-
-  const handleHistoryDateChange = useCallback((value: string) => {
-    setHistoryDate(value);
-    setHistoryStart("06:00");
-    setHistoryEnd("18:00");
-    setHistoryData(null);
-    setHistoryIndex(0);
-  }, []);
-
   return (
     Number.isFinite(lat) &&
     Number.isFinite(lng) &&
@@ -1504,6 +1480,30 @@ export default function CarteUnitesPage() {
 
 
 
+
+  const toggleHistory = useCallback(() => {
+    if (!selectedVehicle) return;
+
+    if (historyOpen) {
+      setHistoryOpen(false);
+      clearHistoryMap();
+      return;
+    }
+
+    setFollowKey(null);
+    clearRoute();
+    setHistoryStart("06:00");
+    setHistoryEnd("18:00");
+    setHistoryOpen(true);
+  }, [clearHistoryMap, clearRoute, historyOpen, selectedVehicle]);
+
+  const handleHistoryDateChange = useCallback((value: string) => {
+    setHistoryDate(value);
+    setHistoryStart("06:00");
+    setHistoryEnd("18:00");
+    setHistoryData(null);
+    setHistoryIndex(0);
+  }, []);
 
   return (
     <div ref={pageRef} className="fleet-page">
