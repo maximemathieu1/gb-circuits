@@ -849,7 +849,7 @@ export default function CarteUnitesPage() {
         },
         paint: {
           "line-color": "#2563eb",
-          "line-width": 5,
+          "line-width": 4,
           "line-opacity": 0.85,
         },
       });
@@ -885,7 +885,7 @@ export default function CarteUnitesPage() {
           "line-cap": "round",
         },
         paint: {
-          "line-color": "#7c3aed",
+          "line-color": "#2563eb",
           "line-width": 5,
           "line-opacity": 0.8,
         },
@@ -901,10 +901,10 @@ export default function CarteUnitesPage() {
         type: "circle",
         source: HISTORY_POINT_SOURCE_ID,
         paint: {
-          "circle-radius": 8,
-          "circle-color": "#7c3aed",
+          "circle-radius": 5,
+          "circle-color": "#2563eb",
           "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 3,
+          "circle-stroke-width": 2,
         },
       });
 
@@ -1574,9 +1574,13 @@ export default function CarteUnitesPage() {
         .fleet-history-summary div { border:1px solid #e2e8f0; background:#f8fafc; border-radius:9px; padding:8px; }
         .fleet-history-summary span { display:block; color:#64748b; font-size:9px; font-weight:900; text-transform:uppercase; }
         .fleet-history-summary strong { display:block; margin-top:3px; font-size:13px; }
-        .fleet-timeline { margin-top:12px; padding:10px; border:1px solid #ddd6fe; background:#f5f3ff; border-radius:11px; }
-        .fleet-timeline input[type="range"] { width:100%; }
-        .fleet-timeline-point { margin-top:7px; font-size:12px; line-height:1.45; }
+        .fleet-history-quick { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+        .fleet-timeline { position:absolute; left:18px; right:18px; bottom:18px; z-index:8; padding:10px 14px; border:1px solid #bfdbfe; background:rgba(255,255,255,.96); border-radius:12px; box-shadow:0 8px 28px rgba(15,23,42,.18); backdrop-filter:blur(8px); }
+        .fleet-timeline-top { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:6px; }
+        .fleet-timeline-title { font-size:12px; font-weight:900; color:#0f172a; white-space:nowrap; }
+        .fleet-timeline input[type="range"] { width:100%; accent-color:#2563eb; }
+        .fleet-timeline-point { min-width:210px; text-align:right; font-size:12px; line-height:1.35; color:#334155; }
+        .fleet-map-count.with-timeline { bottom:118px; }
         .fleet-map-shell { position:relative; flex:1 1 0; width:0; min-width:0; min-height:0; overflow:hidden; }
         .fleet-map { position:absolute; inset:0; width:100%; height:100%; }
         .fleet-map-count { position:absolute; left:12px; bottom:12px; z-index:5; padding:8px 11px; border-radius:10px; background:rgba(15,23,42,.88); color:#fff; font-size:12px; font-weight:800; box-shadow:0 5px 18px rgba(15,23,42,.18); }
@@ -1915,6 +1919,38 @@ export default function CarteUnitesPage() {
                     </label>
                   </div>
 
+                  <div className="fleet-history-quick">
+                    <button
+                      type="button"
+                      className={`fleet-btn ${
+                        historyStart === "06:00" && historyEnd === "10:00"
+                          ? "active"
+                          : ""
+                      }`}
+                      onClick={() => {
+                        setHistoryStart("06:00");
+                        setHistoryEnd("10:00");
+                      }}
+                    >
+                      AM 06:00–10:00
+                    </button>
+
+                    <button
+                      type="button"
+                      className={`fleet-btn ${
+                        historyStart === "14:30" && historyEnd === "18:00"
+                          ? "active"
+                          : ""
+                      }`}
+                      onClick={() => {
+                        setHistoryStart("14:30");
+                        setHistoryEnd("18:00");
+                      }}
+                    >
+                      PM 14:30–18:00
+                    </button>
+                  </div>
+
                   <button
                     type="button"
                     className="fleet-btn"
@@ -1967,15 +2003,6 @@ export default function CarteUnitesPage() {
                         </div>
                       </div>
 
-                      {historyData.points.length > 0 && (
-                        <div className="fleet-timeline">
-                          <input
-                            type="range"
-                            min={0}
-                            max={Math.max(
-                              0,
-                              historyData.points.length - 1,
-                            )}
                             step={1}
                             value={Math.min(
                               historyIndex,
@@ -2074,7 +2101,57 @@ export default function CarteUnitesPage() {
         <div className="fleet-map-shell">
           <div ref={mapNode} className="fleet-map" />
 
-          <div className="fleet-map-count">
+          {historyData?.points?.length > 0 && (
+            <div className="fleet-timeline">
+              <div className="fleet-timeline-top">
+                <div className="fleet-timeline-title">
+                  Historique · unité {selectedVehicle?.unit ?? ""}
+                </div>
+
+                {(() => {
+                  const point =
+                    historyData.points[
+                      Math.min(
+                        historyIndex,
+                        historyData.points.length - 1,
+                      )
+                    ];
+
+                  return (
+                    <div className="fleet-timeline-point">
+                      <strong>{fmtTime(point.time)}</strong>
+                      {" · "}
+                      {point.speedKph == null
+                        ? "Vitesse —"
+                        : `${Math.round(point.speedKph)} km/h`}
+                      {point.address ? ` · ${point.address}` : ""}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <input
+                type="range"
+                min={0}
+                max={Math.max(0, historyData.points.length - 1)}
+                step={1}
+                value={Math.min(
+                  historyIndex,
+                  historyData.points.length - 1,
+                )}
+                onChange={(event) =>
+                  setHistoryIndex(Number(event.target.value))
+                }
+                aria-label="Position dans l'historique du trajet"
+              />
+            </div>
+          )}
+
+          <div
+            className={`fleet-map-count ${
+              historyData?.points?.length ? "with-timeline" : ""
+            }`}
+          >
             {loading
               ? "Chargement…"
               : followKey
