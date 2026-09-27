@@ -496,10 +496,6 @@ function calculateStatus(live: LiveVehicle): VehicleStatus {
   return "STOPPED";
 }
 
-function vehicleStatusLabel(status: VehicleStatus) {
-  return status === "MOVING" ? "En mouvement" : "Le reste";
-}
-
 function telHref(phone: string) {
   return `tel:${phone.replace(/[^\d+]/g, "")}`;
 }
@@ -2633,7 +2629,6 @@ export default function CarteUnitesPage() {
         .fleet-search-option-meta { min-width:0; color:#64748b; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .fleet-search-status { margin-left:auto; flex:0 0 auto; font-size:10px; font-weight:900; white-space:nowrap; }
         .fleet-search-status.moving { color:#15803d; }
-        .fleet-search-status.other { color:#64748b; }
         .fleet-search-empty { padding:12px; color:#64748b; font-size:12px; text-align:center; }
         .fleet-search input:focus { background:#fff; border-color:#93c5fd; box-shadow:0 0 0 3px rgba(37,99,235,.10); }
         .fleet-search-clear { position:absolute; right:7px; top:50%; transform:translateY(-50%); border:0; background:transparent; width:28px; height:28px; border-radius:7px; color:#64748b; cursor:pointer; font-size:17px; }
@@ -2831,15 +2826,11 @@ export default function CarteUnitesPage() {
                         : ""}
                     </span>
 
-                    <span
-                      className={`fleet-search-status ${
-                        vehicle.status === "MOVING"
-                          ? "moving"
-                          : "other"
-                      }`}
-                    >
-                      {vehicleStatusLabel(vehicle.status)}
-                    </span>
+                    {vehicle.status === "MOVING" && (
+                      <span className="fleet-search-status moving">
+                        En mouvement
+                      </span>
+                    )}
                   </button>
                 ))
               )}
