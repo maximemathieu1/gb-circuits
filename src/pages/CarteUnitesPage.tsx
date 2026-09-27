@@ -497,9 +497,7 @@ function calculateStatus(live: LiveVehicle): VehicleStatus {
 }
 
 function vehicleStatusLabel(status: VehicleStatus) {
-  if (status === "MOVING") return "En mouvement";
-  if (status === "STOPPED") return "Arrêté";
-  return "Inactif";
+  return status === "MOVING" ? "En mouvement" : "Le reste";
 }
 
 function telHref(phone: string) {
@@ -614,6 +612,8 @@ export default function CarteUnitesPage() {
   const [historyIndex, setHistoryIndex] = useState(0);
   const [schools, setSchools] = useState<SchoolRow[]>([]);
   const schoolsRef = useRef<SchoolRow[]>([]);
+  const showSchoolsRef = useRef(false);
+  const [showSchools, setShowSchools] = useState(false);
   const [timelineMode, setTimelineMode] = useState<TimelineMode>("TRIP");
   const [speedingIntervals, setSpeedingIntervals] = useState<SpeedingInterval[]>([]);
   const [speedingLoading, setSpeedingLoading] = useState(false);
@@ -624,6 +624,10 @@ export default function CarteUnitesPage() {
   useEffect(() => {
     schoolsRef.current = schools;
   }, [schools]);
+
+  useEffect(() => {
+    showSchoolsRef.current = showSchools;
+  }, [showSchools]);
 
   useEffect(() => {
     selectedKeyRef.current = selectedKey;
@@ -736,12 +740,6 @@ export default function CarteUnitesPage() {
   const searchSuggestions = useMemo(() => {
     const q = normalizeText(searchInput);
 
-    const statusRank: Record<VehicleStatus, number> = {
-      MOVING: 0,
-      STOPPED: 1,
-      STALE: 2,
-    };
-
     return allDisplayVehicles
       .filter((vehicle) => {
         if (filter !== "ALL" && vehicle.compagnie !== filter) return false;
@@ -758,10 +756,10 @@ export default function CarteUnitesPage() {
         );
       })
       .sort((a, b) => {
-        const statusDiff =
-          statusRank[a.status] - statusRank[b.status];
+        const aGroup = a.status === "MOVING" ? 0 : 1;
+        const bGroup = b.status === "MOVING" ? 0 : 1;
 
-        if (statusDiff !== 0) return statusDiff;
+        if (aGroup !== bGroup) return aGroup - bGroup;
 
         return a.unit.localeCompare(b.unit, "fr-CA", {
           numeric: true,
@@ -1344,6 +1342,9 @@ export default function CarteUnitesPage() {
         type: "circle",
         source: SCHOOL_SOURCE_ID,
         minzoom: 8,
+        layout: {
+          visibility: "none",
+        },
         paint: {
           // Zone de clic invisible : aucun point visible sur la carte.
           "circle-radius": 14,
@@ -1359,6 +1360,7 @@ export default function CarteUnitesPage() {
         source: SCHOOL_SOURCE_ID,
         minzoom: 8.5,
         layout: {
+          visibility: "none",
           "text-field": ["get", "nom"],
           "text-size": [
             "interpolate",
@@ -1432,6 +1434,19 @@ export default function CarteUnitesPage() {
         });
       });
 
+      // Les autobus doivent toujours rester visuellement au-dessus des écoles.
+      [
+        CLUSTER_LAYER_ID,
+        CLUSTER_COUNT_LAYER_ID,
+        CIRCLE_LAYER_ID,
+        HEADING_LAYER_ID,
+        LABEL_LAYER_ID,
+      ].forEach((layerId) => {
+        if (map.getLayer(layerId)) {
+          map.moveLayer(layerId);
+        }
+      });
+
       map.addSource(HISTORY_SOURCE_ID, {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -1467,6 +1482,16 @@ export default function CarteUnitesPage() {
           "circle-stroke-color": "#ffffff",
           "circle-stroke-width": 2,
         },
+      });
+
+      [SCHOOL_POINT_LAYER_ID, SCHOOL_LABEL_LAYER_ID].forEach((layerId) => {
+        if (map.getLayer(layerId)) {
+          map.setLayoutProperty(
+            layerId,
+            "visibility",
+            showSchoolsRef.current ? "visible" : "none",
+          );
+        }
       });
 
       renderedMapVehiclesRef.current = latestDisplayRef.current;
@@ -1742,6 +1767,19 @@ export default function CarteUnitesPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+
+    const visibility = showSchools ? "visible" : "none";
+
+    [SCHOOL_POINT_LAYER_ID, SCHOOL_LABEL_LAYER_ID].forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", visibility);
+      }
+    });
+  }, [showSchools]);
 
   useEffect(() => {
     schoolsRef.current = schools;
@@ -2595,14 +2633,16 @@ export default function CarteUnitesPage() {
         .fleet-search-option-meta { min-width:0; color:#64748b; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .fleet-search-status { margin-left:auto; flex:0 0 auto; font-size:10px; font-weight:900; white-space:nowrap; }
         .fleet-search-status.moving { color:#15803d; }
-        .fleet-search-status.stopped { color:#475569; }
-        .fleet-search-status.stale { color:#9a3412; }
+        .fleet-search-status.other { color:#64748b; }
         .fleet-search-empty { padding:12px; color:#64748b; font-size:12px; text-align:center; }
         .fleet-search input:focus { background:#fff; border-color:#93c5fd; box-shadow:0 0 0 3px rgba(37,99,235,.10); }
         .fleet-search-clear { position:absolute; right:7px; top:50%; transform:translateY(-50%); border:0; background:transparent; width:28px; height:28px; border-radius:7px; color:#64748b; cursor:pointer; font-size:17px; }
         .fleet-search-clear:hover { background:#e2e8f0; color:#0f172a; }
         .fleet-header-actions { margin-left:auto; display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
         .fleet-company-group { display:flex; gap:4px; padding:4px; border:1px solid #e2e8f0; background:#f8fafc; border-radius:11px; }
+        .fleet-school-toggle { height:36px; display:inline-flex; align-items:center; gap:7px; padding:0 10px; border:1px solid #dbe2ea; border-radius:9px; background:#fff; color:#334155; font-size:12px; font-weight:800; cursor:pointer; user-select:none; }
+        .fleet-school-toggle:hover { background:#f8fafc; }
+        .fleet-school-toggle input { margin:0; width:15px; height:15px; accent-color:#ef4444; cursor:pointer; }
         .fleet-btn { height:36px; border:1px solid #dbe2ea; background:#fff; color:#334155; border-radius:9px; padding:0 11px; font:inherit; font-size:13px; font-weight:800; cursor:pointer; white-space:nowrap; }
         .fleet-btn:hover { background:#f8fafc; border-color:#cbd5e1; }
         .fleet-btn.active { color:#fff; background:#1d4ed8; border-color:#1d4ed8; }
@@ -2795,9 +2835,7 @@ export default function CarteUnitesPage() {
                       className={`fleet-search-status ${
                         vehicle.status === "MOVING"
                           ? "moving"
-                          : vehicle.status === "STOPPED"
-                            ? "stopped"
-                            : "stale"
+                          : "other"
                       }`}
                     >
                       {vehicleStatusLabel(vehicle.status)}
@@ -2822,6 +2860,15 @@ export default function CarteUnitesPage() {
               </button>
             ))}
           </div>
+
+          <label className="fleet-school-toggle">
+            <input
+              type="checkbox"
+              checked={showSchools}
+              onChange={(event) => setShowSchools(event.target.checked)}
+            />
+            Écoles
+          </label>
 
           <button type="button" className="fleet-btn" onClick={handleCenter}>
             Centrer
