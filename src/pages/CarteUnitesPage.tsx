@@ -130,7 +130,6 @@ const HISTORY_POINT_LAYER_ID = "fleet-history-point-layer";
 
 const SCHOOL_SOURCE_ID = "fleet-school-source";
 const SCHOOL_POINT_LAYER_ID = "fleet-school-points";
-const SCHOOL_INNER_LAYER_ID = "fleet-school-inner";
 const SCHOOL_LABEL_LAYER_ID = "fleet-school-labels";
 
 const VIEW_STORAGE_KEY = "gb-circuits-fleet-view-v2";
@@ -497,6 +496,12 @@ function calculateStatus(live: LiveVehicle): VehicleStatus {
   return "STOPPED";
 }
 
+function vehicleStatusLabel(status: VehicleStatus) {
+  if (status === "MOVING") return "En mouvement";
+  if (status === "STOPPED") return "Arrêté";
+  return "Inactif";
+}
+
 function telHref(phone: string) {
   return `tel:${phone.replace(/[^\d+]/g, "")}`;
 }
@@ -731,20 +736,38 @@ export default function CarteUnitesPage() {
   const searchSuggestions = useMemo(() => {
     const q = normalizeText(searchInput);
 
-    return allDisplayVehicles.filter((vehicle) => {
-      if (filter !== "ALL" && vehicle.compagnie !== filter) return false;
-      if (!q) return true;
+    const statusRank: Record<VehicleStatus, number> = {
+      MOVING: 0,
+      STOPPED: 1,
+      STALE: 2,
+    };
 
-      return (
-        normalizeText(vehicle.unit).includes(q) ||
-        vehicle.circuits.some((circuit) =>
-          normalizeText(circuit).includes(q),
-        ) ||
-        vehicle.conducteurs.some((name) =>
-          normalizeText(name).includes(q),
-        )
-      );
-    });
+    return allDisplayVehicles
+      .filter((vehicle) => {
+        if (filter !== "ALL" && vehicle.compagnie !== filter) return false;
+        if (!q) return true;
+
+        return (
+          normalizeText(vehicle.unit).includes(q) ||
+          vehicle.circuits.some((circuit) =>
+            normalizeText(circuit).includes(q),
+          ) ||
+          vehicle.conducteurs.some((name) =>
+            normalizeText(name).includes(q),
+          )
+        );
+      })
+      .sort((a, b) => {
+        const statusDiff =
+          statusRank[a.status] - statusRank[b.status];
+
+        if (statusDiff !== 0) return statusDiff;
+
+        return a.unit.localeCompare(b.unit, "fr-CA", {
+          numeric: true,
+          sensitivity: "base",
+        });
+      });
   }, [allDisplayVehicles, filter, searchInput]);
 
   useEffect(() => {
@@ -1322,23 +1345,11 @@ export default function CarteUnitesPage() {
         source: SCHOOL_SOURCE_ID,
         minzoom: 8,
         paint: {
-          "circle-radius": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            8,
-            7,
-            11,
-            9,
-            14,
-            11,
-            17,
-            13,
-          ],
-          "circle-color": "#7c3aed",
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 3,
-          "circle-opacity": 1,
+          // Zone de clic invisible : aucun point visible sur la carte.
+          "circle-radius": 14,
+          "circle-color": "rgba(0,0,0,0)",
+          "circle-stroke-width": 0,
+          "circle-opacity": 0,
         },
       });
 
@@ -1346,56 +1357,34 @@ export default function CarteUnitesPage() {
         id: SCHOOL_LABEL_LAYER_ID,
         type: "symbol",
         source: SCHOOL_SOURCE_ID,
-        minzoom: 9,
+        minzoom: 8.5,
         layout: {
-          "text-field": ["concat", "ÉCOLE · ", ["get", "nom"]],
+          "text-field": ["get", "nom"],
           "text-size": [
             "interpolate",
             ["linear"],
             ["zoom"],
-            9,
-            10,
+            8.5,
+            11,
+            11,
             12,
-            12,
-            16,
             14,
+            14,
+            17,
+            16,
           ],
           "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-          "text-offset": [0, 1.55],
-          "text-anchor": "top",
+          "text-anchor": "center",
+          "text-offset": [0, 0],
           "text-allow-overlap": false,
           "text-ignore-placement": false,
-          "text-padding": 4,
+          "text-padding": 3,
         },
         paint: {
-          "text-color": "#4c1d95",
+          "text-color": "#ef4444",
           "text-halo-color": "#ffffff",
-          "text-halo-width": 3,
-          "text-halo-blur": 0.4,
-        },
-      });
-
-      map.addLayer({
-        id: SCHOOL_INNER_LAYER_ID,
-        type: "circle",
-        source: SCHOOL_SOURCE_ID,
-        minzoom: 8,
-        paint: {
-          "circle-radius": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            8,
-            2.5,
-            12,
-            3.5,
-            16,
-            4.5,
-          ],
-          "circle-color": "#ffffff",
-          "circle-stroke-color": "#7c3aed",
-          "circle-stroke-width": 1.5,
-          "circle-opacity": 1,
+          "text-halo-width": 3.5,
+          "text-halo-blur": 0.2,
         },
       });
 
@@ -1431,9 +1420,9 @@ export default function CarteUnitesPage() {
       };
 
       map.on("click", SCHOOL_POINT_LAYER_ID, showSchoolPopup);
-      map.on("click", SCHOOL_INNER_LAYER_ID, showSchoolPopup);
+      map.on("click", SCHOOL_LABEL_LAYER_ID, showSchoolPopup);
 
-      [SCHOOL_POINT_LAYER_ID, SCHOOL_INNER_LAYER_ID].forEach((layerId) => {
+      [SCHOOL_POINT_LAYER_ID, SCHOOL_LABEL_LAYER_ID].forEach((layerId) => {
         map.on("mouseenter", layerId, () => {
           map.getCanvas().style.cursor = "pointer";
         });
@@ -2604,6 +2593,10 @@ export default function CarteUnitesPage() {
         .fleet-search-option:hover { background:#f1f5f9; }
         .fleet-search-option-unit { min-width:64px; font-size:13px; font-weight:950; }
         .fleet-search-option-meta { min-width:0; color:#64748b; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .fleet-search-status { margin-left:auto; flex:0 0 auto; font-size:10px; font-weight:900; white-space:nowrap; }
+        .fleet-search-status.moving { color:#15803d; }
+        .fleet-search-status.stopped { color:#475569; }
+        .fleet-search-status.stale { color:#9a3412; }
         .fleet-search-empty { padding:12px; color:#64748b; font-size:12px; text-align:center; }
         .fleet-search input:focus { background:#fff; border-color:#93c5fd; box-shadow:0 0 0 3px rgba(37,99,235,.10); }
         .fleet-search-clear { position:absolute; right:7px; top:50%; transform:translateY(-50%); border:0; background:transparent; width:28px; height:28px; border-radius:7px; color:#64748b; cursor:pointer; font-size:17px; }
@@ -2796,6 +2789,18 @@ export default function CarteUnitesPage() {
                       {vehicle.conducteurs.length
                         ? ` · ${vehicle.conducteurs.join(", ")}`
                         : ""}
+                    </span>
+
+                    <span
+                      className={`fleet-search-status ${
+                        vehicle.status === "MOVING"
+                          ? "moving"
+                          : vehicle.status === "STOPPED"
+                            ? "stopped"
+                            : "stale"
+                      }`}
+                    >
+                      {vehicleStatusLabel(vehicle.status)}
                     </span>
                   </button>
                 ))
