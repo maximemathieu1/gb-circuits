@@ -177,27 +177,6 @@ function speedingColor(overKph: number | null) {
   return "#f59e0b";
 }
 
-function findSpeedingInterval(
-  time: string,
-  intervals: SpeedingInterval[],
-) {
-  const timestamp = Date.parse(time);
-  if (!Number.isFinite(timestamp)) return null;
-
-  return (
-    intervals.find((interval) => {
-      const start = Date.parse(interval.startTime);
-      const end = Date.parse(interval.endTime);
-      return (
-        Number.isFinite(start) &&
-        Number.isFinite(end) &&
-        timestamp >= start &&
-        timestamp <= end
-      );
-    }) ?? null
-  );
-}
-
 function mapboxMaxspeedToKph(value: any): number | null {
   if (!value || value.unknown || value.none) return null;
 
