@@ -1917,20 +1917,23 @@ export default function CarteUnitesPage() {
           const url =
             `https://api.mapbox.com/matching/v5/mapbox/driving/${coordinates}.json` +
             `?annotations=maxspeed` +
-            `&overview=false` +
+            `&overview=full` +
+            `&geometries=geojson` +
             `&radiuses=${radiuses}` +
             `&timestamps=${timestamps}` +
             `&access_token=${encodeURIComponent(token)}`;
 
           const response = await fetch(url);
 
+          const body = await response.json();
+
           if (!response.ok) {
             throw new Error(
-              `Map Matching ${response.status} ${response.statusText}`,
+              body?.message
+                ? `Map Matching ${response.status} · ${body.message}`
+                : `Map Matching ${response.status} ${response.statusText}`,
             );
           }
-
-          const body = await response.json();
 
           if (body?.code !== "Ok") {
             console.warn(
@@ -1947,9 +1950,49 @@ export default function CarteUnitesPage() {
 
           chunk.forEach((entry, chunkIndex) => {
             const tracepoint = tracepoints[chunkIndex] ?? null;
-            const limit = mapboxMaxspeedToKph(
+
+            let limit = mapboxMaxspeedToKph(
               tracepoint?.maxspeed,
             );
+
+            // Selon le match retourné, maxspeed peut aussi être porté
+            // par les annotations des segments de route.
+            if (limit == null && tracepoint) {
+              const matchingIndex = Number(
+                tracepoint.matchings_index ?? 0,
+              );
+              const matching =
+                Array.isArray(body?.matchings)
+                  ? body.matchings[matchingIndex]
+                  : null;
+
+              const legLimits = Array.isArray(matching?.legs)
+                ? matching.legs.flatMap((leg: any) =>
+                    Array.isArray(leg?.annotation?.maxspeed)
+                      ? leg.annotation.maxspeed
+                      : [],
+                  )
+                : [];
+
+              if (legLimits.length > 0) {
+                const ratio =
+                  chunk.length <= 1
+                    ? 0
+                    : chunkIndex / (chunk.length - 1);
+
+                const approxIndex = Math.min(
+                  legLimits.length - 1,
+                  Math.max(
+                    0,
+                    Math.round(ratio * (legLimits.length - 1)),
+                  ),
+                );
+
+                limit = mapboxMaxspeedToKph(
+                  legLimits[approxIndex],
+                );
+              }
+            }
 
             sampledLimits.set(entry.sourceIndex, {
               time: entry.point.time,
