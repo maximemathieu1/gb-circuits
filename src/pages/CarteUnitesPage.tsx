@@ -268,60 +268,6 @@ function buildRoadSpeedGradient(
   return `linear-gradient(to right, ${parts.join(", ")})`;
 }
 
-function buildSpeedingGradient(
-  points: HistoryPoint[],
-  intervals: SpeedingInterval[],
-) {
-  if (points.length < 2) {
-    return "linear-gradient(to right, #cbd5e1 0%, #cbd5e1 100%)";
-  }
-
-  const maxIndex = points.length - 1;
-  const segments: Array<{
-    startIndex: number;
-    endIndex: number;
-    color: string;
-  }> = [];
-
-  let startIndex = 0;
-  let currentColor = speedingColor(
-    findSpeedingInterval(points[0].time, intervals)?.maxSpeedOverKph ?? null,
-  );
-
-  for (let i = 1; i < points.length; i += 1) {
-    const color = speedingColor(
-      findSpeedingInterval(points[i].time, intervals)?.maxSpeedOverKph ?? null,
-    );
-
-    if (color !== currentColor) {
-      segments.push({
-        startIndex,
-        endIndex: i,
-        color: currentColor,
-      });
-      startIndex = i;
-      currentColor = color;
-    }
-  }
-
-  segments.push({
-    startIndex,
-    endIndex: maxIndex,
-    color: currentColor,
-  });
-
-  const parts: string[] = [];
-
-  for (const segment of segments) {
-    const start = (segment.startIndex / maxIndex) * 100;
-    const end = (segment.endIndex / maxIndex) * 100;
-    parts.push(`${segment.color} ${start}%`);
-    parts.push(`${segment.color} ${end}%`);
-  }
-
-  return `linear-gradient(to right, ${parts.join(", ")})`;
-}
-
 function normalizeText(value: unknown) {
   return String(value ?? "")
     .normalize("NFD")
@@ -2064,7 +2010,9 @@ export default function CarteUnitesPage() {
               ? anchors[anchorCursor + 1]
               : null;
 
-          let chosen = previous;
+          let chosen:
+            | { index: number; time: string; limit: number | null }
+            | null = previous;
 
           if (previous && next) {
             const prevDistance = Math.abs(index - previous.index);
