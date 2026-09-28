@@ -2301,6 +2301,102 @@ export default function CarteUnitesPage() {
   }, [historyTimelinePoints, historyIndex, speedingIntervals]);
 
 
+  const speedGraph = useMemo(() => {
+    if (historyTimelinePoints.length < 2) {
+      return {
+        maxKph: 100,
+        actualPath: "",
+        limitSegments: [] as Array<{
+          d: string;
+          key: string;
+        }>,
+      };
+    }
+
+    const width = 1000;
+    const height = 92;
+    const top = 6;
+    const bottom = 8;
+    const chartHeight = height - top - bottom;
+    const maxIndex = Math.max(1, historyTimelinePoints.length - 1);
+
+    const actualValues = historyTimelinePoints.map((point) =>
+      Number.isFinite(Number(point.speedKph))
+        ? Math.max(0, Number(point.speedKph))
+        : 0,
+    );
+
+    const knownLimits = speedingIntervals
+      .map((interval) => Number(interval.postedSpeedLimitKph))
+      .filter((value) => Number.isFinite(value) && value > 0);
+
+    const maxActual = Math.max(0, ...actualValues);
+    const maxLimit = knownLimits.length
+      ? Math.max(...knownLimits)
+      : 0;
+
+    const maxKph = Math.max(
+      60,
+      Math.ceil((Math.max(maxActual, maxLimit) + 10) / 20) * 20,
+    );
+
+    const xFor = (index: number) => (index / maxIndex) * width;
+    const yFor = (value: number) =>
+      top + chartHeight * (1 - Math.min(maxKph, Math.max(0, value)) / maxKph);
+
+    const actualPath = historyTimelinePoints
+      .map((point, index) => {
+        const speed = Number.isFinite(Number(point.speedKph))
+          ? Number(point.speedKph)
+          : 0;
+
+        return `${index === 0 ? "M" : "L"} ${xFor(index).toFixed(
+          2,
+        )} ${yFor(speed).toFixed(2)}`;
+      })
+      .join(" ");
+
+    const limitSegments: Array<{ d: string; key: string }> = [];
+
+    speedingIntervals.forEach((interval, intervalIndex) => {
+      const limit = Number(interval.postedSpeedLimitKph);
+      if (!Number.isFinite(limit) || limit <= 0) return;
+
+      const startMs = Date.parse(interval.startTime);
+      const endMs = Date.parse(interval.endTime);
+
+      const indexes = historyTimelinePoints
+        .map((point, index) => ({
+          index,
+          time: Date.parse(point.time),
+        }))
+        .filter(
+          (item) =>
+            Number.isFinite(item.time) &&
+            item.time >= startMs &&
+            item.time <= endMs,
+        );
+
+      if (indexes.length === 0) return;
+
+      const startIndex = indexes[0].index;
+      const endIndex = indexes[indexes.length - 1].index;
+
+      limitSegments.push({
+        key: `${interval.startTime}-${intervalIndex}`,
+        d: `M ${xFor(startIndex).toFixed(2)} ${yFor(limit).toFixed(
+          2,
+        )} L ${xFor(endIndex).toFixed(2)} ${yFor(limit).toFixed(2)}`,
+      });
+    });
+
+    return {
+      maxKph,
+      actualPath,
+      limitSegments,
+    };
+  }, [historyTimelinePoints, speedingIntervals]);
+
   useEffect(() => {
     if (historyTimelinePoints.length === 0) {
       setHistoryIndex(0);
@@ -2702,6 +2798,12 @@ export default function CarteUnitesPage() {
         .fleet-timeline { position:absolute; left:18px; right:18px; bottom:18px; z-index:8; padding:10px 14px; border:1px solid #bfdbfe; background:rgba(255,255,255,.96); border-radius:12px; box-shadow:0 8px 28px rgba(15,23,42,.18); backdrop-filter:blur(8px); }
         .fleet-timeline-top { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:6px; }
         .fleet-timeline-title { font-size:12px; font-weight:900; color:#0f172a; white-space:nowrap; }
+        .fleet-speed-chart { position:relative; height:104px; margin:8px 0 4px; padding:6px 8px 2px; border:1px solid #e2e8f0; border-radius:10px; background:#f8fafc; overflow:hidden; }
+        .fleet-speed-chart svg { width:100%; height:88px; display:block; overflow:visible; }
+        .fleet-speed-chart-label { position:absolute; top:6px; left:10px; z-index:2; font-size:10px; font-weight:900; color:#475569; }
+        .fleet-speed-chart-legend { position:absolute; top:6px; right:10px; z-index:2; display:flex; gap:10px; font-size:9px; font-weight:900; color:#475569; }
+        .fleet-speed-chart-legend span { display:inline-flex; align-items:center; gap:4px; }
+        .fleet-speed-chart-line { width:16px; height:3px; border-radius:999px; display:inline-block; }
         .fleet-timeline-track { position:relative; height:34px; display:flex; align-items:center; }
         .fleet-timeline input[type="range"] { position:relative; z-index:2; width:100%; height:8px; margin:0; border-radius:999px; appearance:none; -webkit-appearance:none; outline:none; cursor:pointer; }
         .fleet-timeline input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; border-radius:999px; background:#fff; border:3px solid #2563eb; box-shadow:0 1px 4px rgba(15,23,42,.28); }
@@ -2862,7 +2964,7 @@ export default function CarteUnitesPage() {
           </label>
 
           <button type="button" className="fleet-btn" onClick={handleCenter}>
-            Centrer
+            Vue globale
           </button>
 
           <button
@@ -2920,22 +3022,15 @@ export default function CarteUnitesPage() {
                     setHistoryOpen(false);
                     clearHistoryMap();
                     clearRoute();
-
                     setSidebarOpen(false);
 
-                    const map = mapRef.current;
-                    if (map) {
-                      map.resize();
-
-                      window.requestAnimationFrame(() => {
-                        fitVehicles(allDisplayVehicles, true);
-                      });
-
-                      window.setTimeout(() => {
-                        map.resize();
-                        fitVehicles(allDisplayVehicles, true);
-                      }, 220);
-                    }
+                    window.requestAnimationFrame(() =>
+                      mapRef.current?.resize(),
+                    );
+                    window.setTimeout(
+                      () => mapRef.current?.resize(),
+                      220,
+                    );
                   }}
                 >
                   Retour
@@ -3367,36 +3462,34 @@ export default function CarteUnitesPage() {
                           </span>
                         </>
                       ) : null}
-                      {timelineMode === "SPEED" &&
-                      activeSpeedingInterval ? (
+                      {timelineMode === "SPEED" ? (
                         <>
                           {" · "}
                           <span
                             className="fleet-stop-detail"
                             style={{
-                              color: speedingColor(
-                                activeSpeedingInterval.maxSpeedOverKph,
-                              ),
+                              color: activeSpeedingInterval
+                                ? speedingColor(
+                                    activeSpeedingInterval.maxSpeedOverKph,
+                                  )
+                                : "#475569",
                             }}
                           >
-                            Limite{" "}
-                            {activeSpeedingInterval.postedSpeedLimitKph == null
+                            Roulé{" "}
+                            {point.speedKph == null
+                              ? "—"
+                              : `${Math.round(point.speedKph)} km/h`}
+                            {" · Limite "}
+                            {activeSpeedingInterval?.postedSpeedLimitKph == null
                               ? "—"
                               : `${Math.round(
                                   activeSpeedingInterval.postedSpeedLimitKph,
                                 )} km/h`}
-                            {" · Max "}
-                            {activeSpeedingInterval.maxSpeedKph == null
-                              ? "—"
-                              : `${Math.round(
-                                  activeSpeedingInterval.maxSpeedKph,
-                                )} km/h`}
-                            {" · +"}
-                            {activeSpeedingInterval.maxSpeedOverKph == null
-                              ? "—"
-                              : `${activeSpeedingInterval.maxSpeedOverKph.toFixed(
+                            {activeSpeedingInterval?.maxSpeedOverKph != null
+                              ? ` · +${activeSpeedingInterval.maxSpeedOverKph.toFixed(
                                   1,
-                                )} km/h`}
+                                )} km/h`
+                              : ""}
                           </span>
                         </>
                       ) : null}
@@ -3405,6 +3498,80 @@ export default function CarteUnitesPage() {
                   );
                 })()}
               </div>
+
+              {timelineMode === "SPEED" && (
+                <div className="fleet-speed-chart">
+                  <div className="fleet-speed-chart-label">
+                    Vitesse réelle vs limite
+                  </div>
+
+                  <div className="fleet-speed-chart-legend">
+                    <span>
+                      <i
+                        className="fleet-speed-chart-line"
+                        style={{ background: "#2563eb" }}
+                      />
+                      Vitesse réelle
+                    </span>
+                    <span>
+                      <i
+                        className="fleet-speed-chart-line"
+                        style={{ background: "#dc2626" }}
+                      />
+                      Limite connue
+                    </span>
+                  </div>
+
+                  <svg
+                    viewBox="0 0 1000 92"
+                    preserveAspectRatio="none"
+                    aria-label="Graphique vitesse réelle et limite"
+                  >
+                    {[0.25, 0.5, 0.75].map((ratio) => (
+                      <line
+                        key={ratio}
+                        x1="0"
+                        x2="1000"
+                        y1={6 + (92 - 14) * ratio}
+                        y2={6 + (92 - 14) * ratio}
+                        stroke="#cbd5e1"
+                        strokeWidth="1"
+                        strokeDasharray="6 8"
+                      />
+                    ))}
+
+                    <path
+                      d={speedGraph.actualPath}
+                      fill="none"
+                      stroke="#2563eb"
+                      strokeWidth="3"
+                      vectorEffect="non-scaling-stroke"
+                    />
+
+                    {speedGraph.limitSegments.map((segment) => (
+                      <path
+                        key={segment.key}
+                        d={segment.d}
+                        fill="none"
+                        stroke="#dc2626"
+                        strokeWidth="3"
+                        strokeDasharray="8 5"
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    ))}
+
+                    <line
+                      x1={historyCursorPercent * 10}
+                      x2={historyCursorPercent * 10}
+                      y1="0"
+                      y2="92"
+                      stroke="#0f172a"
+                      strokeWidth="2"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </svg>
+                </div>
+              )}
 
               <div className="fleet-timeline-track">
                 {timelineMode === "TRIP" &&
