@@ -198,6 +198,76 @@ function findSpeedingInterval(
   );
 }
 
+function mapboxMaxspeedToKph(value: any): number | null {
+  if (!value || value.unknown || value.none) return null;
+
+  const speed = Number(value.speed);
+  if (!Number.isFinite(speed) || speed <= 0) return null;
+
+  const unit = String(value.unit ?? "km/h").toLowerCase();
+
+  if (unit.includes("mph")) {
+    return speed * 1.609344;
+  }
+
+  return speed;
+}
+
+function roadSpeedLimitAt(
+  point: HistoryPoint | undefined,
+  limits: Record<string, number | null>,
+) {
+  if (!point) return null;
+  const value = limits[point.time];
+  return value == null || !Number.isFinite(Number(value))
+    ? null
+    : Number(value);
+}
+
+function buildRoadSpeedGradient(
+  points: HistoryPoint[],
+  limits: Record<string, number | null>,
+) {
+  if (points.length < 2) {
+    return "linear-gradient(to right, #cbd5e1 0%, #cbd5e1 100%)";
+  }
+
+  const maxIndex = points.length - 1;
+  const parts: string[] = [];
+  let currentColor = "#cbd5e1";
+  let startIndex = 0;
+
+  const colorForIndex = (index: number) => {
+    const speed = Number(points[index]?.speedKph ?? NaN);
+    const limit = roadSpeedLimitAt(points[index], limits);
+
+    if (!Number.isFinite(speed) || limit == null) return "#cbd5e1";
+
+    return speedingColor(speed - limit);
+  };
+
+  currentColor = colorForIndex(0);
+
+  for (let i = 1; i < points.length; i += 1) {
+    const color = colorForIndex(i);
+
+    if (color !== currentColor) {
+      const start = (startIndex / maxIndex) * 100;
+      const end = (i / maxIndex) * 100;
+      parts.push(`${currentColor} ${start}%`);
+      parts.push(`${currentColor} ${end}%`);
+      startIndex = i;
+      currentColor = color;
+    }
+  }
+
+  const start = (startIndex / maxIndex) * 100;
+  parts.push(`${currentColor} ${start}%`);
+  parts.push(`${currentColor} 100%`);
+
+  return `linear-gradient(to right, ${parts.join(", ")})`;
+}
+
 function buildSpeedingGradient(
   points: HistoryPoint[],
   intervals: SpeedingInterval[],
@@ -611,9 +681,12 @@ export default function CarteUnitesPage() {
   const showSchoolsRef = useRef(false);
   const [showSchools, setShowSchools] = useState(false);
   const [timelineMode, setTimelineMode] = useState<TimelineMode>("TRIP");
-  const [speedingIntervals, setSpeedingIntervals] = useState<SpeedingInterval[]>([]);
+  const [, setSpeedingIntervals] = useState<SpeedingInterval[]>([]);
   const [speedingLoading, setSpeedingLoading] = useState(false);
   const [speedingError, setSpeedingError] = useState("");
+  const [roadSpeedLimits, setRoadSpeedLimits] = useState<Record<string, number | null>>({});
+  const [roadSpeedLoading, setRoadSpeedLoading] = useState(false);
+  const [roadSpeedError, setRoadSpeedError] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(30);
 
@@ -1814,6 +1887,8 @@ export default function CarteUnitesPage() {
     setHistoryError("");
     setSpeedingIntervals([]);
     setSpeedingError("");
+    setRoadSpeedLimits({});
+    setRoadSpeedError("");
     setIsPlaying(false);
 
     const map = mapRef.current;
@@ -1837,6 +1912,188 @@ export default function CarteUnitesPage() {
       features: [],
     } as any);
   }, []);
+
+  const loadRoadSpeedLimits = useCallback(
+    async (points: HistoryPoint[]) => {
+      const token =
+        import.meta.env.VITE_MAPBOX_TOKEN ||
+        import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
+      if (!token || points.length < 2) {
+        setRoadSpeedLimits({});
+        return;
+      }
+
+      setRoadSpeedLoading(true);
+      setRoadSpeedError("");
+
+      try {
+        // Map Matching accepte au maximum 100 coordonnées par requête.
+        // On conserve un chevauchement d'un point entre les groupes.
+        const chunks: Array<Array<{ point: HistoryPoint; sourceIndex: number }>> = [];
+        let current: Array<{ point: HistoryPoint; sourceIndex: number }> = [];
+
+        // Évite d'envoyer des points GPS trop rapprochés dans le temps.
+        // Mapbox recommande environ 5 s entre les points pour le map matching.
+        let lastAcceptedMs = -Infinity;
+
+        points.forEach((point, sourceIndex) => {
+          const timeMs = Date.parse(point.time);
+          if (!Number.isFinite(timeMs)) return;
+
+          if (
+            current.length > 0 &&
+            timeMs - lastAcceptedMs < 4000 &&
+            sourceIndex !== points.length - 1
+          ) {
+            return;
+          }
+
+          current.push({ point, sourceIndex });
+          lastAcceptedMs = timeMs;
+
+          if (current.length === 100) {
+            chunks.push(current);
+
+            // Un point commun aide la continuité entre deux requêtes.
+            const last = current[current.length - 1];
+            current = [last];
+          }
+        });
+
+        if (current.length >= 2) {
+          chunks.push(current);
+        }
+
+        const sampledLimits = new Map<
+          number,
+          { time: string; limit: number | null }
+        >();
+
+        for (const chunk of chunks) {
+          const coordinates = chunk
+            .map(
+              ({ point }) =>
+                `${Number(point.longitude).toFixed(6)},${Number(
+                  point.latitude,
+                ).toFixed(6)}`,
+            )
+            .join(";");
+
+          const timestamps = chunk
+            .map(({ point }) =>
+              Math.floor(Date.parse(point.time) / 1000),
+            )
+            .join(";");
+
+          const radiuses = chunk.map(() => "30").join(";");
+
+          const url =
+            `https://api.mapbox.com/matching/v5/mapbox/driving/${coordinates}.json` +
+            `?annotations=maxspeed` +
+            `&overview=false` +
+            `&radiuses=${radiuses}` +
+            `&timestamps=${timestamps}` +
+            `&access_token=${encodeURIComponent(token)}`;
+
+          const response = await fetch(url);
+
+          if (!response.ok) {
+            throw new Error(
+              `Map Matching ${response.status} ${response.statusText}`,
+            );
+          }
+
+          const body = await response.json();
+
+          if (body?.code !== "Ok") {
+            console.warn(
+              "Map Matching sans résultat pour un segment",
+              body?.code,
+              body?.message,
+            );
+            continue;
+          }
+
+          const tracepoints = Array.isArray(body?.tracepoints)
+            ? body.tracepoints
+            : [];
+
+          chunk.forEach((entry, chunkIndex) => {
+            const tracepoint = tracepoints[chunkIndex] ?? null;
+            const limit = mapboxMaxspeedToKph(
+              tracepoint?.maxspeed,
+            );
+
+            sampledLimits.set(entry.sourceIndex, {
+              time: entry.point.time,
+              limit:
+                limit == null
+                  ? null
+                  : Number(limit.toFixed(1)),
+            });
+          });
+        }
+
+        // Réapplique les limites échantillonnées à tous les points GPS.
+        // Entre deux points connus, on prend la limite de l'ancre temporelle
+        // la plus proche. Si Mapbox signale "unknown", on garde NULL.
+        const anchors = Array.from(sampledLimits.entries())
+          .map(([index, value]) => ({
+            index,
+            time: value.time,
+            limit: value.limit,
+          }))
+          .sort((a, b) => a.index - b.index);
+
+        const limitsByTime: Record<string, number | null> = {};
+
+        let anchorCursor = 0;
+
+        points.forEach((point, index) => {
+          while (
+            anchorCursor + 1 < anchors.length &&
+            anchors[anchorCursor + 1].index <= index
+          ) {
+            anchorCursor += 1;
+          }
+
+          const previous = anchors[anchorCursor] ?? null;
+          const next =
+            anchorCursor + 1 < anchors.length
+              ? anchors[anchorCursor + 1]
+              : null;
+
+          let chosen = previous;
+
+          if (previous && next) {
+            const prevDistance = Math.abs(index - previous.index);
+            const nextDistance = Math.abs(next.index - index);
+
+            if (nextDistance < prevDistance) {
+              chosen = next;
+            }
+          } else if (!previous) {
+            chosen = next;
+          }
+
+          limitsByTime[point.time] = chosen?.limit ?? null;
+        });
+
+        setRoadSpeedLimits(limitsByTime);
+      } catch (err: any) {
+        console.error("Erreur limites routières Mapbox", err);
+        setRoadSpeedLimits({});
+        setRoadSpeedError(
+          err?.message ||
+            "Impossible de charger les limites de vitesse routières.",
+        );
+      } finally {
+        setRoadSpeedLoading(false);
+      }
+    },
+    [],
+  );
 
   const loadHistory = useCallback(async () => {
     if (!selectedVehicle?.vehicleId || !historyDate) return;
@@ -1878,6 +2135,10 @@ export default function CarteUnitesPage() {
 
       setHistoryData(history);
       setHistoryIndex(0);
+      setRoadSpeedLimits({});
+      setRoadSpeedError("");
+
+      void loadRoadSpeedLimits(points);
 
       const map = mapRef.current;
       if (!map || !mapReadyRef.current) return;
@@ -1936,6 +2197,7 @@ export default function CarteUnitesPage() {
     }
   }, [
     clearHistoryMap,
+    loadRoadSpeedLimits,
     historyDate,
     historyEnd,
     historyStart,
@@ -2249,8 +2511,8 @@ export default function CarteUnitesPage() {
   );
 
   const speedTimelineGradient = useMemo(
-    () => buildSpeedingGradient(historyTimelinePoints, speedingIntervals),
-    [historyTimelinePoints, speedingIntervals],
+    () => buildRoadSpeedGradient(historyTimelinePoints, roadSpeedLimits),
+    [historyTimelinePoints, roadSpeedLimits],
   );
 
   const timelineGradient =
@@ -2290,15 +2552,36 @@ export default function CarteUnitesPage() {
     };
   }, [activeHistoryStop, historyTimelinePoints]);
 
-  const activeSpeedingInterval = useMemo(() => {
+  const activeRoadSpeedLimit = useMemo(() => {
     const point =
       historyTimelinePoints[
         Math.min(historyIndex, historyTimelinePoints.length - 1)
       ];
 
-    if (!point) return null;
-    return findSpeedingInterval(point.time, speedingIntervals);
-  }, [historyTimelinePoints, historyIndex, speedingIntervals]);
+    return roadSpeedLimitAt(point, roadSpeedLimits);
+  }, [historyTimelinePoints, historyIndex, roadSpeedLimits]);
+
+  const activeRoadSpeedOver = useMemo(() => {
+    const point =
+      historyTimelinePoints[
+        Math.min(historyIndex, historyTimelinePoints.length - 1)
+      ];
+
+    const actual = Number(point?.speedKph ?? NaN);
+
+    if (
+      !Number.isFinite(actual) ||
+      activeRoadSpeedLimit == null
+    ) {
+      return null;
+    }
+
+    return actual - activeRoadSpeedLimit;
+  }, [
+    historyTimelinePoints,
+    historyIndex,
+    activeRoadSpeedLimit,
+  ]);
 
 
   const speedGraph = useMemo(() => {
@@ -2306,10 +2589,7 @@ export default function CarteUnitesPage() {
       return {
         maxKph: 100,
         actualPath: "",
-        limitSegments: [] as Array<{
-          d: string;
-          key: string;
-        }>,
+        limitPaths: [] as string[],
       };
     }
 
@@ -2326,9 +2606,14 @@ export default function CarteUnitesPage() {
         : 0,
     );
 
-    const knownLimits = speedingIntervals
-      .map((interval) => Number(interval.postedSpeedLimitKph))
-      .filter((value) => Number.isFinite(value) && value > 0);
+    const limitValues = historyTimelinePoints.map((point) =>
+      roadSpeedLimitAt(point, roadSpeedLimits),
+    );
+
+    const knownLimits = limitValues.filter(
+      (value): value is number =>
+        value != null && Number.isFinite(value) && value > 0,
+    );
 
     const maxActual = Math.max(0, ...actualValues);
     const maxLimit = knownLimits.length
@@ -2342,7 +2627,9 @@ export default function CarteUnitesPage() {
 
     const xFor = (index: number) => (index / maxIndex) * width;
     const yFor = (value: number) =>
-      top + chartHeight * (1 - Math.min(maxKph, Math.max(0, value)) / maxKph);
+      top +
+      chartHeight *
+        (1 - Math.min(maxKph, Math.max(0, value)) / maxKph);
 
     const actualPath = historyTimelinePoints
       .map((point, index) => {
@@ -2356,46 +2643,34 @@ export default function CarteUnitesPage() {
       })
       .join(" ");
 
-    const limitSegments: Array<{ d: string; key: string }> = [];
+    const limitPaths: string[] = [];
+    let currentPath = "";
 
-    speedingIntervals.forEach((interval, intervalIndex) => {
-      const limit = Number(interval.postedSpeedLimitKph);
-      if (!Number.isFinite(limit) || limit <= 0) return;
+    limitValues.forEach((limit, index) => {
+      if (limit == null) {
+        if (currentPath) {
+          limitPaths.push(currentPath);
+          currentPath = "";
+        }
+        return;
+      }
 
-      const startMs = Date.parse(interval.startTime);
-      const endMs = Date.parse(interval.endTime);
-
-      const indexes = historyTimelinePoints
-        .map((point, index) => ({
-          index,
-          time: Date.parse(point.time),
-        }))
-        .filter(
-          (item) =>
-            Number.isFinite(item.time) &&
-            item.time >= startMs &&
-            item.time <= endMs,
-        );
-
-      if (indexes.length === 0) return;
-
-      const startIndex = indexes[0].index;
-      const endIndex = indexes[indexes.length - 1].index;
-
-      limitSegments.push({
-        key: `${interval.startTime}-${intervalIndex}`,
-        d: `M ${xFor(startIndex).toFixed(2)} ${yFor(limit).toFixed(
-          2,
-        )} L ${xFor(endIndex).toFixed(2)} ${yFor(limit).toFixed(2)}`,
-      });
+      const command = currentPath ? "L" : "M";
+      currentPath += `${command} ${xFor(index).toFixed(
+        2,
+      )} ${yFor(limit).toFixed(2)} `;
     });
+
+    if (currentPath) {
+      limitPaths.push(currentPath);
+    }
 
     return {
       maxKph,
       actualPath,
-      limitSegments,
+      limitPaths,
     };
-  }, [historyTimelinePoints, speedingIntervals]);
+  }, [historyTimelinePoints, roadSpeedLimits]);
 
   useEffect(() => {
     if (historyTimelinePoints.length === 0) {
@@ -2647,6 +2922,7 @@ export default function CarteUnitesPage() {
 
     setFollowKey(null);
     clearRoute();
+    setTimelineMode("TRIP");
     setHistoryStart("06:00");
     setHistoryEnd("18:00");
     setHistoryOpen(true);
@@ -2791,7 +3067,6 @@ export default function CarteUnitesPage() {
         .fleet-history-summary span { display:block; color:#64748b; font-size:9px; font-weight:900; text-transform:uppercase; }
         .fleet-history-summary strong { display:block; margin-top:3px; font-size:13px; }
         .fleet-history-quick { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
-        .fleet-history-modes { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
         .fleet-school-note { margin-top:7px; color:#64748b; font-size:10px; }
         .fleet-playback { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
         .fleet-playback select { height:32px; border:1px solid #dbe2ea; border-radius:8px; background:#fff; padding:0 7px; font:inherit; font-size:11px; font-weight:800; }
@@ -3218,28 +3493,6 @@ export default function CarteUnitesPage() {
                     </label>
                   </div>
 
-                  <div className="fleet-history-modes">
-                    <button
-                      type="button"
-                      className={`fleet-btn ${
-                        timelineMode === "TRIP" ? "active" : ""
-                      }`}
-                      onClick={() => setTimelineMode("TRIP")}
-                    >
-                      Trajet
-                    </button>
-
-                    <button
-                      type="button"
-                      className={`fleet-btn ${
-                        timelineMode === "SPEED" ? "active" : ""
-                      }`}
-                      onClick={() => setTimelineMode("SPEED")}
-                    >
-                      Vitesse
-                    </button>
-                  </div>
-
                   <div className="fleet-history-quick">
                     <button
                       type="button"
@@ -3287,16 +3540,6 @@ export default function CarteUnitesPage() {
 
                   {historyError && (
                     <div className="fleet-error">{historyError}</div>
-                  )}
-
-                  {timelineMode === "SPEED" && speedingLoading && (
-                    <div className="fleet-school-note">
-                      Chargement des excès de vitesse…
-                    </div>
-                  )}
-
-                  {timelineMode === "SPEED" && speedingError && (
-                    <div className="fleet-error">{speedingError}</div>
                   )}
 
                   {historyData && (
@@ -3432,6 +3675,39 @@ export default function CarteUnitesPage() {
                       <option value={30}>×30</option>
                       <option value={60}>×60</option>
                     </select>
+
+                    <button
+                      type="button"
+                      className={`fleet-btn ${
+                        timelineMode === "SPEED" ? "active" : ""
+                      }`}
+                      style={{ height: 30 }}
+                      onClick={() =>
+                        setTimelineMode((mode) =>
+                          mode === "SPEED" ? "TRIP" : "SPEED",
+                        )
+                      }
+                      title={
+                        timelineMode === "SPEED"
+                          ? "Revenir à l’analyse du trajet"
+                          : "Afficher l’analyse de vitesse"
+                      }
+                    >
+                      Vitesse
+                    </button>
+
+                    {timelineMode === "SPEED" &&
+                    (speedingLoading || roadSpeedLoading) ? (
+                      <span
+                        style={{
+                          color: "#64748b",
+                          fontSize: 10,
+                          fontWeight: 800,
+                        }}
+                      >
+                        Chargement…
+                      </span>
+                    ) : null}
                   </div>
                 </div>
 
@@ -3468,11 +3744,10 @@ export default function CarteUnitesPage() {
                           <span
                             className="fleet-stop-detail"
                             style={{
-                              color: activeSpeedingInterval
-                                ? speedingColor(
-                                    activeSpeedingInterval.maxSpeedOverKph,
-                                  )
-                                : "#475569",
+                              color:
+                                activeRoadSpeedOver == null
+                                  ? "#475569"
+                                  : speedingColor(activeRoadSpeedOver),
                             }}
                           >
                             Roulé{" "}
@@ -3480,15 +3755,12 @@ export default function CarteUnitesPage() {
                               ? "—"
                               : `${Math.round(point.speedKph)} km/h`}
                             {" · Limite "}
-                            {activeSpeedingInterval?.postedSpeedLimitKph == null
+                            {activeRoadSpeedLimit == null
                               ? "—"
-                              : `${Math.round(
-                                  activeSpeedingInterval.postedSpeedLimitKph,
-                                )} km/h`}
-                            {activeSpeedingInterval?.maxSpeedOverKph != null
-                              ? ` · +${activeSpeedingInterval.maxSpeedOverKph.toFixed(
-                                  1,
-                                )} km/h`
+                              : `${Math.round(activeRoadSpeedLimit)} km/h`}
+                            {activeRoadSpeedOver != null &&
+                            activeRoadSpeedOver > 0
+                              ? ` · +${activeRoadSpeedOver.toFixed(1)} km/h`
                               : ""}
                           </span>
                         </>
@@ -3498,6 +3770,24 @@ export default function CarteUnitesPage() {
                   );
                 })()}
               </div>
+
+              {timelineMode === "SPEED" &&
+              (roadSpeedError || speedingError) ? (
+                <div
+                  style={{
+                    margin: "7px 0 4px",
+                    padding: "7px 9px",
+                    borderRadius: 8,
+                    background: "#fff7ed",
+                    border: "1px solid #fed7aa",
+                    color: "#9a3412",
+                    fontSize: 10,
+                    fontWeight: 800,
+                  }}
+                >
+                  {roadSpeedError || speedingError}
+                </div>
+              ) : null}
 
               {timelineMode === "SPEED" && (
                 <div className="fleet-speed-chart">
@@ -3548,10 +3838,10 @@ export default function CarteUnitesPage() {
                       vectorEffect="non-scaling-stroke"
                     />
 
-                    {speedGraph.limitSegments.map((segment) => (
+                    {speedGraph.limitPaths.map((path, index) => (
                       <path
-                        key={segment.key}
-                        d={segment.d}
+                        key={`limit-${index}`}
+                        d={path}
                         fill="none"
                         stroke="#dc2626"
                         strokeWidth="3"
