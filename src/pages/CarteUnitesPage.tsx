@@ -171,9 +171,8 @@ function schoolGeoJson(schools: SchoolRow[]) {
 }
 
 function speedingColor(overKph: number | null) {
-  if (overKph == null || overKph <= 0) return "#cbd5e1";
+  if (overKph == null || overKph < 12) return "#cbd5e1";
   if (overKph >= 16) return "#dc2626";
-  if (overKph >= 12) return "#c2410c";
   return "#f59e0b";
 }
 
@@ -3935,21 +3934,14 @@ export default function CarteUnitesPage() {
                         className="fleet-timeline-swatch"
                         style={{ background: "#f59e0b" }}
                       />
-                      Excès jusqu’à +12 km/h
-                    </span>
-                    <span>
-                      <i
-                        className="fleet-timeline-swatch"
-                        style={{ background: "#c2410c" }}
-                      />
-                      Excès +12 km/h
+                      Excès +12 à +16 km/h
                     </span>
                     <span>
                       <i
                         className="fleet-timeline-swatch"
                         style={{ background: "#dc2626" }}
                       />
-                      Excès +16 km/h
+                      Excès +16 km/h et plus
                     </span>
                   </>
                 )}
