@@ -1145,8 +1145,9 @@ export default function CarteUnitesPage() {
         type: "geojson",
         data: toGeoJson([]) as any,
         cluster: true,
-        clusterMaxZoom: 13,
-        clusterRadius: 42,
+        // Regroupement plus léger : les unités restent individuelles plus longtemps.
+        clusterMaxZoom: 11,
+        clusterRadius: 28,
       } as any);
 
       map.addLayer({
