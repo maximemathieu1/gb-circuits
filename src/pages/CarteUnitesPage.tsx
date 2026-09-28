@@ -1878,7 +1878,7 @@ export default function CarteUnitesPage() {
           current.push({ point, sourceIndex });
           lastAcceptedMs = timeMs;
 
-          if (current.length === 100) {
+          if (current.length === 80) {
             chunks.push(current);
 
             // Un point commun aide la continuité entre deux requêtes.
@@ -1914,24 +1914,46 @@ export default function CarteUnitesPage() {
 
           const radiuses = chunk.map(() => "30").join(";");
 
+          // Utilise POST pour éviter la limite d'environ 8100 octets
+          // des requêtes GET Map Matching lorsqu'un trajet contient beaucoup
+          // de coordonnées/timestamps.
           const url =
-            `https://api.mapbox.com/matching/v5/mapbox/driving/${coordinates}.json` +
-            `?annotations=maxspeed` +
-            `&overview=full` +
-            `&geometries=geojson` +
-            `&radiuses=${radiuses}` +
-            `&timestamps=${timestamps}` +
-            `&access_token=${encodeURIComponent(token)}`;
+            `https://api.mapbox.com/matching/v5/mapbox/driving` +
+            `?access_token=${encodeURIComponent(token)}`;
 
-          const response = await fetch(url);
+          const bodyParams = new URLSearchParams();
+          bodyParams.set("coordinates", coordinates);
+          bodyParams.set("annotations", "maxspeed");
+          bodyParams.set("overview", "full");
+          bodyParams.set("geometries", "geojson");
+          bodyParams.set("radiuses", radiuses);
+          bodyParams.set("timestamps", timestamps);
+          bodyParams.set("tidy", "true");
 
-          const body = await response.json();
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: bodyParams.toString(),
+          });
+
+          let body: any = null;
+
+          try {
+            body = await response.json();
+          } catch {
+            body = null;
+          }
 
           if (!response.ok) {
+            const details =
+              body?.message ||
+              body?.code ||
+              `${response.statusText || "requête invalide"}`;
+
             throw new Error(
-              body?.message
-                ? `Map Matching ${response.status} · ${body.message}`
-                : `Map Matching ${response.status} ${response.statusText}`,
+              `Map Matching ${response.status} · ${details}`,
             );
           }
 
