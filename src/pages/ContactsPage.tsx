@@ -189,6 +189,24 @@ const filterButtonStyle = (
 });
 
 export default function ContactsPage() {
+  const [isMobilePage, setIsMobilePage] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 820px)").matches,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 820px)");
+    const syncMobile = () => setIsMobilePage(media.matches);
+
+    syncMobile();
+    media.addEventListener("change", syncMobile);
+
+    return () => {
+      media.removeEventListener("change", syncMobile);
+    };
+  }, []);
+
   const [onglet, setOnglet] = useState<Onglet>("urgence");
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [circuitsConducteurs, setCircuitsConducteurs] = useState<
