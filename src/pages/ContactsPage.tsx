@@ -1018,91 +1018,166 @@ export default function ContactsPage() {
             </div>
           </div>
 
-          <div className="table-wrap">
-            <table className="list">
-              <thead>
-                <tr>
-                  <th>Nom</th>
-                  <th>Transporteur</th>
-                  <th>Statut</th>
-                  <th>Téléphone</th>
-                  <th>Circuit</th>
-                  <th>Unité</th>
-                </tr>
-              </thead>
-              <tbody>
-                {conducteurs.map((conducteur) => (
-                  <tr
-                    key={conducteur.key}
-                    className="row"
-                    style={{ cursor: "pointer" }}
-                    onDoubleClick={() =>
-                      modifierConducteur(conducteur)
-                    }
-                    title="Double-clic pour modifier la fiche conducteur"
+          {isMobilePage ? (
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                marginTop: 10,
+              }}
+            >
+              {conducteurs.map((conducteur) => (
+                <div
+                  key={conducteur.key}
+                  onClick={() => modifierConducteur(conducteur)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    padding: "12px 13px",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 12,
+                    background: "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  <strong
+                    style={{
+                      minWidth: 0,
+                      fontSize: 15,
+                      lineHeight: 1.25,
+                    }}
                   >
-                    <td>
-                      <strong>{conducteur.nom}</strong>
-                    </td>
-                    <td>{conducteur.compagnie}</td>
-                    <td>
-                      <span
-                        style={{
-                          display: "inline-flex",
-                          padding: "4px 8px",
-                          borderRadius: 999,
-                          background:
-                            conducteur.source ===
-                            "remplacant"
-                              ? "#fff4e5"
-                              : "#eefbf3",
-                          fontSize: 12,
-                          fontWeight: 800,
-                        }}
-                      >
-                        {conducteur.source ===
-                        "remplacant"
-                          ? "Remplaçant"
-                          : "Régulier"}
-                      </span>
-                    </td>
-                    <td>
-                      {conducteur.telephone ? (
-                        <a
-                          href={telHref(
-                            conducteur.telephone,
-                          )}
-                        >
-                          {conducteur.telephone}
-                        </a>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td>
-                      {conducteur.circuits.length
-                        ? conducteur.circuits.join(", ")
-                        : "—"}
-                    </td>
-                    <td>
-                      {conducteur.unites.length
-                        ? conducteur.unites.join(", ")
-                        : "—"}
-                    </td>
-                  </tr>
-                ))}
+                    {conducteur.nom}
+                  </strong>
 
-                {!conducteurs.length && (
+                  {conducteur.telephone ? (
+                    <a
+                      href={telHref(conducteur.telephone)}
+                      onClick={(event) => event.stopPropagation()}
+                      style={{
+                        flex: "0 0 auto",
+                        fontWeight: 900,
+                        color: "#1d4ed8",
+                        textDecoration: "none",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {conducteur.telephone}
+                    </a>
+                  ) : (
+                    <span
+                      style={{
+                        flex: "0 0 auto",
+                        color: "#98a2b3",
+                      }}
+                    >
+                      —
+                    </span>
+                  )}
+                </div>
+              ))}
+
+              {!conducteurs.length && (
+                <div
+                  className="muted"
+                  style={{
+                    padding: 14,
+                    textAlign: "center",
+                  }}
+                >
+                  Aucun conducteur ne correspond aux filtres.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table className="list">
+                <thead>
                   <tr>
-                    <td colSpan={6} className="muted">
-                      Aucun conducteur ne correspond aux
-                      filtres.
-                    </td>
+                    <th>Nom</th>
+                    <th>Transporteur</th>
+                    <th>Statut</th>
+                    <th>Téléphone</th>
+                    <th>Circuit</th>
+                    <th>Unité</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {conducteurs.map((conducteur) => (
+                    <tr
+                      key={conducteur.key}
+                      className="row"
+                      style={{ cursor: "pointer" }}
+                      onDoubleClick={() =>
+                        modifierConducteur(conducteur)
+                      }
+                      title="Double-clic pour modifier la fiche conducteur"
+                    >
+                      <td>
+                        <strong>{conducteur.nom}</strong>
+                      </td>
+                      <td>{conducteur.compagnie}</td>
+                      <td>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            padding: "4px 8px",
+                            borderRadius: 999,
+                            background:
+                              conducteur.source ===
+                              "remplacant"
+                                ? "#fff4e5"
+                                : "#eefbf3",
+                            fontSize: 12,
+                            fontWeight: 800,
+                          }}
+                        >
+                          {conducteur.source ===
+                          "remplacant"
+                            ? "Remplaçant"
+                            : "Régulier"}
+                        </span>
+                      </td>
+                      <td>
+                        {conducteur.telephone ? (
+                          <a
+                            href={telHref(
+                              conducteur.telephone,
+                            )}
+                          >
+                            {conducteur.telephone}
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td>
+                        {conducteur.circuits.length
+                          ? conducteur.circuits.join(", ")
+                          : "—"}
+                      </td>
+                      <td>
+                        {conducteur.unites.length
+                          ? conducteur.unites.join(", ")
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+
+                  {!conducteurs.length && (
+                    <tr>
+                      <td colSpan={6} className="muted">
+                        Aucun conducteur ne correspond aux
+                        filtres.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       ) : (
         <div
