@@ -566,7 +566,8 @@ export default function ContactsPage() {
           : null,
       type_contact: form.typeContact,
       nom: form.nom.trim(),
-      fonction: form.fonction.trim(),
+      fonction:
+        onglet === "conducteurs" ? "" : form.fonction.trim(),
       telephone: form.telephone.trim(),
       telephone2: form.telephone2.trim(),
       courriel: form.courriel.trim(),
@@ -1525,21 +1526,23 @@ export default function ContactsPage() {
                 />
               </label>
 
-              <label>
-                <div className="field-label">
-                  Fonction
-                </div>
-                <input
-                  style={inputStyle}
-                  value={form.fonction}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      fonction: e.target.value,
-                    }))
-                  }
-                />
-              </label>
+              {onglet !== "conducteurs" && (
+                <label>
+                  <div className="field-label">
+                    Fonction
+                  </div>
+                  <input
+                    style={inputStyle}
+                    value={form.fonction}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        fonction: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              )}
 
               <label>
                 <div className="field-label">

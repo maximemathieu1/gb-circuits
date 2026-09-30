@@ -468,7 +468,6 @@ export default function CircuitsScolairesPage() {
   const [contactsConducteurs, setContactsConducteurs] = useState<ContactConducteur[]>([]);
   const [contactsChargement, setContactsChargement] = useState(false);
   const [contactsErreur, setContactsErreur] = useState("");
-  const [rechercheConducteur, setRechercheConducteur] = useState("");
 
   async function chargerContactsConducteurs() {
     setContactsChargement(true);
@@ -498,8 +497,9 @@ export default function CircuitsScolairesPage() {
 
   const conducteursDisponibles = contactsConducteurs.filter((contact) =>
     contact.id === conducteurSelectionneId ||
-    (contact.actif && (contact.organisation === circuitForm.compagnie || contact.organisation === "Groupe Breton") &&
-      normaliserAffectation(`${contact.nom} ${contact.telephone}`).includes(normaliserAffectation(rechercheConducteur)))
+    (contact.actif &&
+      (contact.organisation === circuitForm.compagnie ||
+        contact.organisation === "Groupe Breton"))
   );
 
   function selectionnerConducteur(id: string) {
@@ -1367,7 +1367,6 @@ export default function CircuitsScolairesPage() {
    */
 
   function ouvrirAjoutCircuit() {
-    setRechercheConducteur("");
     void chargerContactsConducteurs();
     setCircuitActifId(null);
 
@@ -1392,7 +1391,6 @@ export default function CircuitsScolairesPage() {
     circuit: CircuitScolaire
   ) {
     setCircuitActifId(circuit.id);
-    setRechercheConducteur("");
     void chargerContactsConducteurs();
 
     setCircuitForm({
@@ -3565,14 +3563,6 @@ export default function CircuitsScolairesPage() {
                   Nom conducteur
                 </div>
 
-                <input
-                  className="input"
-                  aria-label="Rechercher un conducteur dans les contacts"
-                  placeholder="Rechercher un conducteur…"
-                  value={rechercheConducteur}
-                  onChange={(e) => setRechercheConducteur(e.target.value)}
-                  style={{ marginBottom: 6 }}
-                />
                 <select
                   className="input"
                   aria-label="Nom conducteur"
