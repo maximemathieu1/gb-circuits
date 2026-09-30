@@ -62,15 +62,6 @@ type ConducteurAffiche = {
   unites: string[];
 };
 
-const organisations: Organisation[] = [
-  "Autobus Breton",
-  "Autobus Champagne",
-  "Transport Sécuritaire",
-  "Groupe Breton",
-  "CSSBE",
-  "Autre",
-];
-
 const typesConducteur: TypeContact[] = [
   "Conducteur",
   "Conducteur remplaçant",
