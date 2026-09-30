@@ -218,13 +218,6 @@ function AppShell() {
           </NavLink>
 
           <NavLink
-            to="/admin/contacts"
-            className={linkClass}
-          >
-            Contacts
-          </NavLink>
-
-          <NavLink
             to="/admin/circuit-tablette-gps"
             className={linkClass}
           >
@@ -240,11 +233,12 @@ function AppShell() {
         </div>
 
         <div className="section">
-          <div className="section-title">Système</div>
-
-          <div className="navlink" style={{ opacity: 0.45 }}>
-            Paramètres
-          </div>
+          <NavLink
+            to="/admin/contacts"
+            className={linkClass}
+          >
+            Contacts
+          </NavLink>
         </div>
 
         <div className="section">

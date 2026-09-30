@@ -11,6 +11,7 @@ type Organisation =
 
 type TypeContact =
   | "Urgence"
+  | "Conducteur"
   | "Conducteur remplaçant"
   | "Direction"
   | "CSSBE"
@@ -47,12 +48,13 @@ type CircuitConducteurRaw = {
   nomConducteur: string;
   telephone: string;
   compagnie: Compagnie;
+  conducteurContactId: string | null;
 };
 
 type ConducteurAffiche = {
   key: string;
-  source: "circuit" | "remplacant";
-  contactId: string | null;
+  source: "regulier" | "remplacant";
+  contactId: string;
   nom: string;
   telephone: string;
   compagnie: Compagnie;
@@ -71,6 +73,7 @@ const organisations: Organisation[] = [
 
 const typesContact: TypeContact[] = [
   "Urgence",
+  "Conducteur",
   "Conducteur remplaçant",
   "Direction",
   "CSSBE",
@@ -225,7 +228,7 @@ export default function ContactsPage() {
       circuitSupabase
         .from("circuits_scolaires")
         .select(
-          "id,circuit,unite,nom_conducteur,telephone,compagnie",
+          "id,circuit,unite,nom_conducteur,telephone,compagnie,conducteur_contact_id",
         )
         .order("circuit", { ascending: true }),
     ]);
@@ -275,6 +278,9 @@ export default function ContactsPage() {
         nomConducteur: String(item.nom_conducteur ?? ""),
         telephone: String(item.telephone ?? ""),
         compagnie: item.compagnie as Compagnie,
+        conducteurContactId: item.conducteur_contact_id
+          ? String(item.conducteur_contact_id)
+          : null,
       }));
 
     setContacts(contactsMapped);
@@ -307,78 +313,76 @@ export default function ContactsPage() {
   }, [contacts, recherche]);
 
   const conducteurs = useMemo(() => {
-    const map = new Map<string, ConducteurAffiche>();
-
-    if (filtreConducteur === "Tous") {
-      for (const row of circuitsConducteurs) {
-        if (!compagniesSelectionnees.includes(row.compagnie)) {
-          continue;
-        }
-
-        const key = `circuit::${normalize(row.compagnie)}::${normalize(
-          row.nomConducteur,
-        )}`;
-
-        const actuel = map.get(key);
-        if (actuel) {
-          if (
-            row.circuit &&
-            !actuel.circuits.includes(row.circuit)
-          ) {
-            actuel.circuits.push(row.circuit);
-          }
-          if (row.unite && !actuel.unites.includes(row.unite)) {
-            actuel.unites.push(row.unite);
-          }
-          if (!actuel.telephone && row.telephone) {
-            actuel.telephone = row.telephone;
-          }
-        } else {
-          map.set(key, {
-            key,
-            source: "circuit",
-            contactId: null,
-            nom: row.nomConducteur,
-            telephone: row.telephone,
-            compagnie: row.compagnie,
-            circuits: row.circuit ? [row.circuit] : [],
-            unites: row.unite ? [row.unite] : [],
-          });
-        }
-      }
-    }
-
-    for (const contact of contacts) {
-      if (!contact.actif) continue;
-      if (contact.typeContact !== "Conducteur remplaçant") {
-        continue;
-      }
-
-      const compagnie = compagnieDepuisOrganisation(
-        contact.organisation,
-      );
-      if (!compagnie) continue;
-      if (!compagniesSelectionnees.includes(compagnie)) {
-        continue;
-      }
-
-      const key = `remplacant::${contact.id}`;
-
-      map.set(key, {
-        key,
-        source: "remplacant",
-        contactId: contact.id,
-        nom: contact.nom,
-        telephone: contact.telephone,
-        compagnie,
-        circuits: [],
-        unites: [],
-      });
-    }
-
     const q = normalize(recherche);
 
-    return [...map.values()]
+    return contacts
+      .filter((contact) => contact.actif)
+      .filter(
+        (contact) =>
+          contact.typeContact === "Conducteur" ||
+          contact.typeContact === "Conducteur remplaçant",
+      )
+      .filter((contact) => {
+        if (
+          filtreConducteur === "Remplaçants" &&
+          contact.typeContact !== "Conducteur remplaçant"
+        ) {
+          return false;
+        }
+
+        const compagnie = compagnieDepuisOrganisation(
+          contact.organisation,
+        );
+
+        return (
+          compagnie != null &&
+          compagniesSelectionnees.includes(compagnie)
+        );
+      })
+      .map((contact): ConducteurAffiche | null => {
+        const compagnie = compagnieDepuisOrganisation(
+          contact.organisation,
+        );
+
+        if (!compagnie) return null;
+
+        const circuitsLies = circuitsConducteurs.filter(
+          (row) =>
+            row.conducteurContactId === contact.id ||
+            (
+              !row.conducteurContactId &&
+              row.compagnie === compagnie &&
+              normalize(row.nomConducteur) === normalize(contact.nom)
+            ),
+        );
+
+        return {
+          key: contact.id,
+          source:
+            contact.typeContact === "Conducteur remplaçant"
+              ? "remplacant"
+              : "regulier",
+          contactId: contact.id,
+          nom: contact.nom,
+          telephone: contact.telephone,
+          compagnie,
+          circuits: [
+            ...new Set(
+              circuitsLies
+                .map((row) => row.circuit)
+                .filter(Boolean),
+            ),
+          ],
+          unites: [
+            ...new Set(
+              circuitsLies
+                .map((row) => row.unite)
+                .filter(Boolean),
+            ),
+          ],
+        };
+      })
+      .filter((row): row is ConducteurAffiche => row != null)
       .filter((conducteur) => {
         if (!q) return true;
 
@@ -413,6 +417,7 @@ export default function ContactsPage() {
       .filter((contact) => contact.actif)
       .filter(
         (contact) =>
+          contact.typeContact !== "Conducteur" &&
           contact.typeContact !== "Conducteur remplaçant",
       )
       .filter(
@@ -523,15 +528,14 @@ export default function ContactsPage() {
     setModalOuvert(true);
   }
 
-  function modifierRemplacant(row: ConducteurAffiche) {
-    if (row.source !== "remplacant" || !row.contactId) {
-      return;
-    }
-
+  function modifierConducteur(row: ConducteurAffiche) {
     const contact = contacts.find(
       (c) => c.id === row.contactId,
     );
-    if (contact) ouvrirModification(contact);
+
+    if (contact) {
+      ouvrirModification(contact);
+    }
   }
 
   function fermerModal() {
@@ -1008,9 +1012,8 @@ export default function ContactsPage() {
                 </span>
               </div>
               <div className="card-subtitle">
-                Les conducteurs réguliers proviennent des
-                circuits scolaires. Les remplaçants sont
-                modifiables ici.
+                Tous les conducteurs sont liés au répertoire central.
+                Double-clic pour modifier la fiche.
               </div>
             </div>
           </div>
@@ -1032,20 +1035,11 @@ export default function ContactsPage() {
                   <tr
                     key={conducteur.key}
                     className="row"
-                    style={{
-                      cursor:
-                        conducteur.source === "remplacant"
-                          ? "pointer"
-                          : "default",
-                    }}
+                    style={{ cursor: "pointer" }}
                     onDoubleClick={() =>
-                      modifierRemplacant(conducteur)
+                      modifierConducteur(conducteur)
                     }
-                    title={
-                      conducteur.source === "remplacant"
-                        ? "Double-clic pour modifier"
-                        : "Conducteur lié aux circuits scolaires"
-                    }
+                    title="Double-clic pour modifier la fiche conducteur"
                   >
                     <td>
                       <strong>{conducteur.nom}</strong>
@@ -1117,6 +1111,122 @@ export default function ContactsPage() {
             gap: 18,
           }}
         >
+          {/* EXTERNE : une seule card */}
+          <div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                gap: 10,
+                marginBottom: 8,
+              }}
+            >
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 18,
+                }}
+              >
+                Externe
+              </h2>
+
+              <span
+                style={{
+                  color: "#667085",
+                  fontSize: 13,
+                }}
+              >
+                CSSBE et autres organisations externes
+              </span>
+            </div>
+
+            <div className="card">
+              <div className="card-head">
+                <div>
+                  <div className="card-title">
+                    Contacts externes
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        color: "#667085",
+                        fontSize: 13,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {organisationsGroupes.externes.length} contact
+                      {organisationsGroupes.externes.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="table-wrap">
+                <table className="list">
+                  <thead>
+                    <tr>
+                      <th>Organisation</th>
+                      <th>Nom</th>
+                      <th>Type</th>
+                      <th>Fonction</th>
+                      <th>Téléphone</th>
+                      <th>Courriel</th>
+                      <th>Notes</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {organisationsGroupes.externes.map((contact) => (
+                      <tr
+                        key={contact.id}
+                        className="row"
+                        style={{ cursor: "pointer" }}
+                        onDoubleClick={() =>
+                          ouvrirModification(contact)
+                        }
+                      >
+                        <td>
+                          <strong>
+                            {organisationLabel(contact)}
+                          </strong>
+                        </td>
+                        <td>{contact.nom}</td>
+                        <td>{contact.typeContact}</td>
+                        <td>{contact.fonction || "—"}</td>
+                        <td>
+                          {contact.telephone ? (
+                            <a href={telHref(contact.telephone)}>
+                              {contact.telephone}
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td>
+                          {contact.courriel ? (
+                            <a href={mailHref(contact.courriel)}>
+                              {contact.courriel}
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td>{contact.notes || "—"}</td>
+                      </tr>
+                    ))}
+
+                    {!organisationsGroupes.externes.length && (
+                      <tr>
+                        <td colSpan={7} className="muted">
+                          Aucun contact externe ne correspond aux filtres.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
           {/* INTERNE : une seule card */}
           <div>
             <div
@@ -1233,121 +1343,6 @@ export default function ContactsPage() {
             </div>
           </div>
 
-          {/* EXTERNE : une seule card */}
-          <div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                gap: 10,
-                marginBottom: 8,
-              }}
-            >
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 18,
-                }}
-              >
-                Externe
-              </h2>
-
-              <span
-                style={{
-                  color: "#667085",
-                  fontSize: 13,
-                }}
-              >
-                CSSBE et autres organisations externes
-              </span>
-            </div>
-
-            <div className="card">
-              <div className="card-head">
-                <div>
-                  <div className="card-title">
-                    Contacts externes
-                    <span
-                      style={{
-                        marginLeft: 8,
-                        color: "#667085",
-                        fontSize: 13,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {organisationsGroupes.externes.length} contact
-                      {organisationsGroupes.externes.length === 1 ? "" : "s"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="table-wrap">
-                <table className="list">
-                  <thead>
-                    <tr>
-                      <th>Organisation</th>
-                      <th>Nom</th>
-                      <th>Type</th>
-                      <th>Fonction</th>
-                      <th>Téléphone</th>
-                      <th>Courriel</th>
-                      <th>Notes</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {organisationsGroupes.externes.map((contact) => (
-                      <tr
-                        key={contact.id}
-                        className="row"
-                        style={{ cursor: "pointer" }}
-                        onDoubleClick={() =>
-                          ouvrirModification(contact)
-                        }
-                      >
-                        <td>
-                          <strong>
-                            {organisationLabel(contact)}
-                          </strong>
-                        </td>
-                        <td>{contact.nom}</td>
-                        <td>{contact.typeContact}</td>
-                        <td>{contact.fonction || "—"}</td>
-                        <td>
-                          {contact.telephone ? (
-                            <a href={telHref(contact.telephone)}>
-                              {contact.telephone}
-                            </a>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td>
-                          {contact.courriel ? (
-                            <a href={mailHref(contact.courriel)}>
-                              {contact.courriel}
-                            </a>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td>{contact.notes || "—"}</td>
-                      </tr>
-                    ))}
-
-                    {!organisationsGroupes.externes.length && (
-                      <tr>
-                        <td colSpan={7} className="muted">
-                          Aucun contact externe ne correspond aux filtres.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
         </div>
       )}
 
