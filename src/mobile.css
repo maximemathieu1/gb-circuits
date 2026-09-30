@@ -1,0 +1,338 @@
+/* ============================================================
+   GB CIRCUITS - MOBILE DRAWER
+   ============================================================ */
+
+.mobile-topbar,
+.mobile-sidebar,
+.mobile-menu-overlay {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  html,
+  body,
+  #root {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    overflow-x: hidden;
+  }
+
+  body {
+    background: #f4f6f8;
+  }
+
+  .app-shell.is-mobile {
+    display: block;
+    min-height: 100vh;
+    width: 100%;
+  }
+
+  .app-shell.is-mobile .content {
+    width: 100%;
+    margin: 0;
+    padding: 72px 10px 18px;
+    box-sizing: border-box;
+  }
+
+  /* ---------- TOPBAR ---------- */
+
+  .mobile-topbar {
+    position: fixed;
+    z-index: 6000;
+    left: 0;
+    top: 0;
+    right: 0;
+    height: calc(58px + env(safe-area-inset-top));
+    padding:
+      env(safe-area-inset-top)
+      12px
+      0;
+    box-sizing: border-box;
+
+    display: grid;
+    grid-template-columns: 44px 1fr 44px;
+    align-items: center;
+
+    background: rgba(255, 255, 255, 0.98);
+    border-bottom: 1px solid #e5e7eb;
+    backdrop-filter: blur(10px);
+  }
+
+  .mobile-topbar-title {
+    text-align: center;
+    font-size: 18px;
+    font-weight: 900;
+    color: #10233f;
+  }
+
+  .mobile-topbar-spacer {
+    width: 44px;
+  }
+
+  /* ---------- HAMBURGER ---------- */
+
+  .mobile-menu-button {
+    width: 42px;
+    height: 42px;
+    padding: 9px;
+    border: 0;
+    background: transparent;
+    border-radius: 10px;
+    cursor: pointer;
+
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+  }
+
+  .mobile-menu-button span {
+    display: block;
+    width: 23px;
+    height: 3px;
+    border-radius: 999px;
+    background: #10233f;
+  }
+
+  /* ---------- OVERLAY ---------- */
+
+  .mobile-menu-overlay {
+    display: block;
+    position: fixed;
+    z-index: 6990;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.42);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+  }
+
+  .mobile-menu-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* ---------- DRAWER ---------- */
+
+  .sidebar.mobile-sidebar {
+    display: flex !important;
+    position: fixed !important;
+    z-index: 7000 !important;
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+
+    width: min(82vw, 330px) !important;
+    height: 100dvh !important;
+
+    padding:
+      max(16px, env(safe-area-inset-top))
+      14px
+      max(18px, env(safe-area-inset-bottom)) !important;
+
+    box-sizing: border-box;
+    overflow-y: auto;
+
+    background: #fff;
+    border-right: 1px solid #e5e7eb;
+    box-shadow: 8px 0 30px rgba(15, 23, 42, 0.15);
+
+    transform: translateX(-105%);
+    transition: transform 220ms ease;
+
+    flex-direction: column;
+  }
+
+  .sidebar.mobile-sidebar.open {
+    transform: translateX(0);
+  }
+
+  .mobile-sidebar .brand {
+    padding-top: 20px;
+    padding-bottom: 22px;
+  }
+
+  .mobile-sidebar .brand-logo {
+    max-width: 150px;
+  }
+
+  .mobile-menu-close {
+    position: absolute;
+    top: max(10px, env(safe-area-inset-top));
+    right: 10px;
+
+    width: 38px;
+    height: 38px;
+
+    border: 0;
+    border-radius: 10px;
+    background: #f1f5f9;
+
+    font-size: 28px;
+    line-height: 1;
+    color: #334155;
+    cursor: pointer;
+  }
+
+  .mobile-sidebar .section {
+    width: 100%;
+  }
+
+  .mobile-sidebar .navlink {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    font-size: 16px;
+    border-radius: 12px;
+  }
+
+  .mobile-sidebar-bottom {
+    margin-top: auto !important;
+  }
+
+  .mobile-sidebar .logout-btn {
+    width: 100%;
+    min-height: 48px;
+    margin-top: 10px;
+  }
+
+  /* ---------- PAGE ---------- */
+
+  .page {
+    width: 100%;
+    min-width: 0;
+    padding: 0 !important;
+  }
+
+  .page-header {
+    margin-bottom: 12px !important;
+  }
+
+  .page-header h1,
+  h1 {
+    margin-top: 0;
+    font-size: 24px !important;
+    line-height: 1.15 !important;
+  }
+
+  .page-header .muted {
+    font-size: 13px;
+  }
+
+  .card {
+    width: 100%;
+    box-sizing: border-box;
+    border-radius: 14px !important;
+  }
+
+  .card-head {
+    align-items: flex-start !important;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .page-actions {
+    width: 100%;
+    display: flex;
+    gap: 8px;
+  }
+
+  .page-actions > button {
+    flex: 1;
+    min-height: 42px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .input,
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .btn,
+  .btn-primary,
+  .btn-danger,
+  .ghost {
+    min-height: 42px;
+  }
+
+  /* ---------- TABLES ---------- */
+
+  .table-wrap {
+    width: 100%;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table.list {
+    min-width: 760px;
+  }
+
+  table.list th,
+  table.list td {
+    white-space: nowrap;
+  }
+
+  /* ---------- MODALS ---------- */
+
+  .modal-backdrop {
+    padding: 0 !important;
+    align-items: stretch !important;
+  }
+
+  .modal-card {
+    width: 100% !important;
+    max-width: none !important;
+    min-height: 100dvh;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+    overflow-y: auto !important;
+    padding: 14px !important;
+    box-sizing: border-box;
+  }
+
+  .modal-head {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: #fff;
+    padding-top: 4px;
+    padding-bottom: 10px;
+  }
+
+  .modal-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
+    background: #fff;
+    padding-top: 10px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  .modal-actions-right {
+    display: flex;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 520px) {
+  .app-shell.is-mobile .content {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .page-actions {
+    flex-direction: column;
+  }
+
+  .page-actions > button {
+    width: 100%;
+  }
+}

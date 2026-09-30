@@ -21,6 +21,7 @@ import ImportBusPlanner from "./pages/ImportBusPlanner";
 
 import { circuitSupabase } from "./lib/circuitSupabase";
 import "./styles.css";
+import "./mobile.css";
 
 const SUITE_GB_URL = "https://suite.groupebreton.com";
 
@@ -182,7 +183,32 @@ function SsoBootstrap({
   return <>{children}</>;
 }
 
+function useIsMobile(bp = 900) {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia(`(max-width: ${bp}px)`).matches
+      : false,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia(`(max-width: ${bp}px)`);
+    const onChange = () => setIsMobile(media.matches);
+
+    onChange();
+    media.addEventListener("change", onChange);
+
+    return () => {
+      media.removeEventListener("change", onChange);
+    };
+  }, [bp]);
+
+  return isMobile;
+}
+
 function AppShell() {
+  const isMobile = useIsMobile(900);
+  const [menuMobileOuvert, setMenuMobileOuvert] = useState(false);
+
   const linkClass = ({
     isActive,
   }: {
@@ -194,63 +220,129 @@ function AppShell() {
     window.location.href = SUITE_GB_URL;
   }
 
+  function fermerMenuMobile() {
+    setMenuMobileOuvert(false);
+  }
+
+  const menu = (
+    <>
+      <div className="brand">
+        <img
+          src="/logo-gb-suite.svg"
+          className="brand-logo"
+          alt="GB Suite"
+          title="Retour au portail Suite GB"
+          onClick={() => {
+            window.location.href = SUITE_GB_URL;
+          }}
+        />
+      </div>
+
+      <div className="section">
+        <NavLink
+          to="/admin/circuits-scolaires"
+          className={linkClass}
+          onClick={fermerMenuMobile}
+        >
+          Circuits scolaire
+        </NavLink>
+
+        <NavLink
+          to="/admin/circuit-tablette-gps"
+          className={linkClass}
+          onClick={fermerMenuMobile}
+        >
+          Circuit Tablette GPS
+        </NavLink>
+
+        <NavLink
+          to="/admin/carte-unites"
+          className={linkClass}
+          onClick={fermerMenuMobile}
+        >
+          Carte des unités
+        </NavLink>
+      </div>
+
+      <div className="section mobile-sidebar-bottom">
+        <NavLink
+          to="/admin/contacts"
+          className={linkClass}
+          onClick={fermerMenuMobile}
+        >
+          Contacts
+        </NavLink>
+
+        <button
+          className="logout-btn"
+          type="button"
+          onClick={logout}
+        >
+          Se déconnecter
+        </button>
+      </div>
+    </>
+  );
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <img
-            src="/logo-gb-suite.svg"
-            className="brand-logo"
-            alt="GB Suite"
-            title="Retour au portail Suite GB"
-            onClick={() => {
-              window.location.href = SUITE_GB_URL;
-            }}
+    <div className={"app-shell" + (isMobile ? " is-mobile" : "")}>
+      {!isMobile && (
+        <aside className="sidebar">
+          {menu}
+        </aside>
+      )}
+
+      {isMobile && (
+        <>
+          <header className="mobile-topbar">
+            <button
+              type="button"
+              className="mobile-menu-button"
+              onClick={() =>
+                setMenuMobileOuvert((value) => !value)
+              }
+              aria-label="Ouvrir le menu"
+              aria-expanded={menuMobileOuvert}
+            >
+              <span />
+              <span />
+              <span />
+            </button>
+
+            <div className="mobile-topbar-title">
+              GB Circuits
+            </div>
+
+            <div className="mobile-topbar-spacer" />
+          </header>
+
+          <div
+            className={
+              "mobile-menu-overlay" +
+              (menuMobileOuvert ? " open" : "")
+            }
+            onClick={fermerMenuMobile}
           />
-        </div>
 
-        <div className="section">
-          <NavLink
-            to="/admin/circuits-scolaires"
-            className={linkClass}
+          <aside
+            className={
+              "sidebar mobile-sidebar" +
+              (menuMobileOuvert ? " open" : "")
+            }
           >
-            Circuits scolaire
-          </NavLink>
+            <button
+              type="button"
+              className="mobile-menu-close"
+              onClick={fermerMenuMobile}
+              aria-label="Fermer le menu"
+            >
+              ×
+            </button>
 
-          <NavLink
-            to="/admin/circuit-tablette-gps"
-            className={linkClass}
-          >
-            Circuit Tablette GPS
-          </NavLink>
-
-          <NavLink
-            to="/admin/carte-unites"
-            className={linkClass}
-          >
-            Carte des unités
-          </NavLink>
-        </div>
-
-        <div className="section">
-          <NavLink
-            to="/admin/contacts"
-            className={linkClass}
-          >
-            Contacts
-          </NavLink>
-        </div>
-
-        <div className="section">
-          <button
-            className="logout-btn"
-            type="button"
-            onClick={logout}
-          >
-            Se déconnecter
-          </button>
-        </div>
-      </aside>
+            {menu}
+          </aside>
+        </>
+      )}
 
       <main className="content">
         <Routes>
@@ -264,9 +356,6 @@ function AppShell() {
             }
           />
 
-          {/* =========================
-              CIRCUITS SCOLAIRE
-          ========================== */}
           <Route
             path="circuits-scolaires"
             element={<CircuitsScolairesPage />}
@@ -282,9 +371,6 @@ function AppShell() {
             element={<CarteUnitesPage />}
           />
 
-          {/* =========================
-              CIRCUIT TABLETTE GPS
-          ========================== */}
           <Route
             path="circuit-tablette-gps"
             element={<DispatchCircuits />}
