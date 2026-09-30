@@ -316,6 +316,16 @@ function formatHeureLive(value: string | null) {
 }
 
 export default function CircuitsScolairesPage() {
+  const [isMobilePage, setIsMobilePage] = useState(
+    () => typeof window !== "undefined" && window.innerWidth < 900
+  );
+
+  useEffect(() => {
+    const onResize = () => setIsMobilePage(window.innerWidth < 900);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   const inputFichierRef =
     useRef<HTMLInputElement | null>(null);
 
@@ -2385,6 +2395,182 @@ export default function CircuitsScolairesPage() {
           </div>
         </div>
 
+        {isMobilePage ? (
+          <div
+            style={{
+              display: "grid",
+              gap: 9,
+            }}
+          >
+            {circuitsFiltres.map((item) => {
+              const live = samsaraLiveParCircuit[item.id];
+
+              return (
+                <div
+                  key={item.id}
+                  onDoubleClick={() =>
+                    ouvrirModificationCircuit(item)
+                  }
+                  onClick={() =>
+                    ouvrirModificationCircuit(item)
+                  }
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 14,
+                    padding: 12,
+                    background: "#fff",
+                    display: "grid",
+                    gap: 9,
+                    cursor: "pointer",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      gap: 10,
+                    }}
+                  >
+                    <div>
+                      <div
+                        style={{
+                          fontSize: 18,
+                          fontWeight: 900,
+                        }}
+                      >
+                        Circuit {item.circuit}
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 3,
+                          color: "#667085",
+                          fontSize: 13,
+                        }}
+                      >
+                        Unité {item.unite || "—"} · {item.compagnie}
+                      </div>
+                    </div>
+
+                    {live?.found ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          ouvrirCarteGps(item);
+                        }}
+                        style={{
+                          border: "1px solid #86efac",
+                          background: "#f0fdf4",
+                          color: "#166534",
+                          borderRadius: 999,
+                          padding: "7px 10px",
+                          fontWeight: 900,
+                        }}
+                      >
+                        ● GPS
+                      </button>
+                    ) : (
+                      <span
+                        style={{
+                          border: "1px solid #fecaca",
+                          background: "#fef2f2",
+                          color: "#991b1b",
+                          borderRadius: 999,
+                          padding: "7px 10px",
+                          fontWeight: 800,
+                          fontSize: 12,
+                        }}
+                      >
+                        ● Aucun GPS
+                      </span>
+                    )}
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 8,
+                    }}
+                  >
+                    <div>
+                      <div
+                        className="muted"
+                        style={{ fontSize: 11 }}
+                      >
+                        Conducteur
+                      </div>
+                      <div style={{ fontWeight: 800 }}>
+                        {item.nomConducteur || "—"}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div
+                        className="muted"
+                        style={{ fontSize: 11 }}
+                      >
+                        Téléphone
+                      </div>
+                      <div style={{ fontWeight: 800 }}>
+                        {item.telephone ? (
+                          <a
+                            href={telHref(item.telephone)}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {item.telephone}
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div
+                        className="muted"
+                        style={{ fontSize: 11 }}
+                      >
+                        Localisation
+                      </div>
+                      <div style={{ fontWeight: 700 }}>
+                        {item.localisation || "—"}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div
+                        className="muted"
+                        style={{ fontSize: 11 }}
+                      >
+                        Documents
+                      </div>
+                      <div style={{ fontWeight: 700 }}>
+                        {item.documents.length > 0
+                          ? `${item.documents.length} document(s)`
+                          : "—"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {circuitsFiltres.length === 0 && (
+              <div
+                className="muted"
+                style={{
+                  padding: 14,
+                  textAlign: "center",
+                }}
+              >
+                Aucun circuit.
+              </div>
+            )}
+          </div>
+        ) : (
         <div className="table-wrap">
           <table className="list">
             <thead>
@@ -2626,6 +2812,7 @@ export default function CircuitsScolairesPage() {
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       {/* CARTE GPS SAMSARA */}
