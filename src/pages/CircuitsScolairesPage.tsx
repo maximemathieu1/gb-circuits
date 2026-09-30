@@ -446,10 +446,34 @@ export default function CircuitsScolairesPage() {
   const [recherche, setRecherche] =
     useState("");
 
-  const [compagnie, setCompagnie] =
-    useState<Compagnie | "Toutes">(
-      "Toutes"
+  const toutesCompagnies: Compagnie[] = [
+    "Autobus Breton",
+    "Autobus Champagne",
+    "Transport Sécuritaire",
+  ];
+
+  const [compagniesSelectionnees, setCompagniesSelectionnees] =
+    useState<Compagnie[]>(toutesCompagnies);
+
+  const compagnie: Compagnie | "Toutes" =
+    compagniesSelectionnees.length === 1
+      ? compagniesSelectionnees[0]
+      : "Toutes";
+
+  const compagnieParDefaut: Compagnie =
+    compagniesSelectionnees[0] ?? "Autobus Breton";
+
+  function basculerCompagnieFiltre(valeur: Compagnie) {
+    setCompagniesSelectionnees((actuelles) =>
+      actuelles.includes(valeur)
+        ? actuelles.filter((item) => item !== valeur)
+        : [...actuelles, valeur]
     );
+  }
+
+  function selectionnerToutesCompagnies() {
+    setCompagniesSelectionnees(toutesCompagnies);
+  }
 
   const [tri, setTri] =
     useState<ColonneTriCircuit>(
@@ -1313,8 +1337,7 @@ export default function CircuitsScolairesPage() {
     const resultat = circuits.filter(
       (item) => {
         const okCompagnie =
-          compagnie === "Toutes" ||
-          item.compagnie === compagnie;
+          compagniesSelectionnees.includes(item.compagnie);
 
         const okRecherche =
           !q ||
@@ -1370,7 +1393,7 @@ export default function CircuitsScolairesPage() {
   }, [
     circuits,
     recherche,
-    compagnie,
+    compagniesSelectionnees,
     tri,
     direction,
   ]);
@@ -1410,15 +1433,10 @@ export default function CircuitsScolairesPage() {
 
   const remplacantsFiltres =
     useMemo(() => {
-      if (compagnie === "Toutes") {
-        return remplacants;
-      }
-
-      return remplacants.filter(
-        (item) =>
-          item.compagnie === compagnie
+      return remplacants.filter((item) =>
+        compagniesSelectionnees.includes(item.compagnie)
       );
-    }, [remplacants, compagnie]);
+    }, [remplacants, compagniesSelectionnees]);
 
   /*
    * CIRCUIT - MODAL
@@ -1430,10 +1448,7 @@ export default function CircuitsScolairesPage() {
     setCircuitForm({
       ...circuitVide,
 
-      compagnie:
-        compagnie === "Toutes"
-          ? "Autobus Breton"
-          : compagnie,
+      compagnie: compagnieParDefaut,
 
       documents: [],
     });
@@ -2416,10 +2431,7 @@ export default function CircuitsScolairesPage() {
     setRemplacantForm({
       ...remplacantVide,
 
-      compagnie:
-        compagnie === "Toutes"
-          ? "Autobus Breton"
-          : compagnie,
+      compagnie: compagnieParDefaut,
     });
 
     setModalRemplacantOuvert(true);
@@ -2583,10 +2595,14 @@ export default function CircuitsScolairesPage() {
       format: "letter",
     });
 
-    const titre =
-      compagnie === "Toutes"
-        ? "Circuits scolaire - Toutes les compagnies"
-        : `Circuits scolaire - ${compagnie}`;
+    const libelleCompagnies =
+      compagniesSelectionnees.length === toutesCompagnies.length
+        ? "Toutes les compagnies"
+        : compagniesSelectionnees.length
+          ? compagniesSelectionnees.join(" + ")
+          : "Aucune compagnie";
+
+    const titre = `Circuits scolaire - ${libelleCompagnies}`;
 
     const dateExport = new Date().toLocaleDateString("fr-CA");
 
@@ -2667,13 +2683,17 @@ export default function CircuitsScolairesPage() {
     });
 
     const nomFichier =
-      compagnie === "Toutes"
+      compagniesSelectionnees.length === toutesCompagnies.length
         ? "circuits-scolaires"
-        : `circuits-${compagnie
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/[^a-z0-9]+/g, "-")}`;
+        : `circuits-${compagniesSelectionnees
+            .map((c) =>
+              c
+                .toLowerCase()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .replace(/[^a-z0-9]+/g, "-")
+            )
+            .join("-")}`;
 
     doc.save(`${nomFichier}.pdf`);
   }
@@ -2738,33 +2758,75 @@ export default function CircuitsScolairesPage() {
               Compagnie
             </div>
 
-            <select
-              className="input"
-              value={compagnie}
-              onChange={(e) =>
-                setCompagnie(
-                  e.target.value as
-                    | Compagnie
-                    | "Toutes"
-                )
-              }
+            <div
+              style={{
+                minHeight: 38,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+                padding: "5px 8px",
+                border: "1px solid #d7dee8",
+                borderRadius: 12,
+                background: "#fff",
+              }}
             >
-              <option value="Toutes">
-                Toutes les compagnies
-              </option>
+              {[
+                { valeur: "Autobus Breton" as Compagnie, libelle: "B" },
+                { valeur: "Autobus Champagne" as Compagnie, libelle: "C" },
+                { valeur: "Transport Sécuritaire" as Compagnie, libelle: "S" },
+              ].map(({ valeur, libelle }) => (
+                <label
+                  key={valeur}
+                  title={valeur}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "3px 5px",
+                    borderRadius: 8,
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    color: "#1e293b",
+                    userSelect: "none",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={compagniesSelectionnees.includes(valeur)}
+                    onChange={() => basculerCompagnieFiltre(valeur)}
+                    style={{
+                      width: 15,
+                      height: 15,
+                      accentColor: "#2563eb",
+                      cursor: "pointer",
+                    }}
+                  />
+                  {libelle}
+                </label>
+              ))}
 
-              <option value="Autobus Breton">
-                Autobus Breton
-              </option>
-
-              <option value="Autobus Champagne">
-                Autobus Champagne
-              </option>
-
-              <option value="Transport Sécuritaire">
-                Transport Sécuritaire
-              </option>
-            </select>
+              <button
+                type="button"
+                onClick={selectionnerToutesCompagnies}
+                style={{
+                  border: "1px solid #d7dee8",
+                  borderRadius: 999,
+                  background:
+                    compagniesSelectionnees.length === toutesCompagnies.length
+                      ? "#f1f5f9"
+                      : "#fff",
+                  padding: "4px 10px",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  color: "#1e293b",
+                  cursor: "pointer",
+                }}
+              >
+                Tous
+              </button>
+            </div>
           </div>
         </div>
       </div>
