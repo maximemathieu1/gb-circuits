@@ -19,6 +19,13 @@ type TypeContact =
   | "Fournisseur"
   | "Autre";
 
+type Onglet = "urgence" | "conducteurs" | "organisations";
+
+type Compagnie =
+  | "Autobus Breton"
+  | "Autobus Champagne"
+  | "Transport Sécuritaire";
+
 type Contact = {
   id: string;
   organisation: Organisation;
@@ -31,6 +38,26 @@ type Contact = {
   courriel: string;
   notes: string;
   actif: boolean;
+};
+
+type CircuitConducteurRaw = {
+  id: string;
+  circuit: string;
+  unite: string;
+  nomConducteur: string;
+  telephone: string;
+  compagnie: Compagnie;
+};
+
+type ConducteurAffiche = {
+  key: string;
+  source: "circuit" | "remplacant";
+  contactId: string | null;
+  nom: string;
+  telephone: string;
+  compagnie: Compagnie;
+  circuits: string[];
+  unites: string[];
 };
 
 const organisations: Organisation[] = [
@@ -53,10 +80,16 @@ const typesContact: TypeContact[] = [
   "Autre",
 ];
 
+const compagnies: Compagnie[] = [
+  "Autobus Breton",
+  "Autobus Champagne",
+  "Transport Sécuritaire",
+];
+
 const contactVide: Omit<Contact, "id"> = {
   organisation: "Groupe Breton",
   organisationAutre: "",
-  typeContact: "Urgence",
+  typeContact: "Direction",
   nom: "",
   fonction: "",
   telephone: "",
@@ -74,6 +107,25 @@ function normalize(value: unknown) {
     .trim();
 }
 
+function organisationLabel(contact: Contact) {
+  return contact.organisation === "Autre"
+    ? contact.organisationAutre || "Autre"
+    : contact.organisation;
+}
+
+function compagnieDepuisOrganisation(
+  organisation: Organisation,
+): Compagnie | null {
+  if (
+    organisation === "Autobus Breton" ||
+    organisation === "Autobus Champagne" ||
+    organisation === "Transport Sécuritaire"
+  ) {
+    return organisation;
+  }
+  return null;
+}
+
 function telHref(phone: string) {
   return `tel:${phone.replace(/[^\d+]/g, "")}`;
 }
@@ -82,43 +134,11 @@ function mailHref(email: string) {
   return `mailto:${email.trim()}`;
 }
 
-function organisationLabel(contact: Contact) {
-  return contact.organisation === "Autre"
-    ? contact.organisationAutre || "Autre"
-    : contact.organisation;
+function shortCompagnie(compagnie: Compagnie) {
+  if (compagnie === "Autobus Breton") return "B";
+  if (compagnie === "Autobus Champagne") return "C";
+  return "S";
 }
-
-function shortOrganisation(org: Organisation) {
-  switch (org) {
-    case "Autobus Breton":
-      return "B";
-    case "Autobus Champagne":
-      return "C";
-    case "Transport Sécuritaire":
-      return "S";
-    case "Groupe Breton":
-      return "GB";
-    case "CSSBE":
-      return "CSSBE";
-    case "Autre":
-      return "Autre";
-  }
-}
-
-const chipBase: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  minHeight: 34,
-  padding: "6px 11px",
-  borderRadius: 8,
-  border: "1px solid #d6dce5",
-  background: "#fff",
-  cursor: "pointer",
-  fontWeight: 700,
-  fontSize: 13,
-  userSelect: "none",
-};
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -130,47 +150,92 @@ const inputStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
+const tabStyle = (
+  actif: boolean,
+): React.CSSProperties => ({
+  minHeight: 38,
+  borderRadius: 9,
+  padding: "8px 14px",
+  border: actif ? "1px solid #2f6fed" : "1px solid #d0d5dd",
+  background: actif ? "#2f6fed" : "#fff",
+  color: actif ? "#fff" : "#101828",
+  fontWeight: 800,
+  cursor: "pointer",
+});
+
+const filterButtonStyle = (
+  actif: boolean,
+): React.CSSProperties => ({
+  minHeight: 34,
+  borderRadius: 9,
+  padding: "6px 11px",
+  border: actif ? "1px solid #9bb7ff" : "1px solid #d0d5dd",
+  background: actif ? "#eef4ff" : "#fff",
+  color: actif ? "#12398f" : "#344054",
+  fontWeight: 800,
+  cursor: "pointer",
+});
+
 export default function ContactsPage() {
+  const [onglet, setOnglet] = useState<Onglet>("urgence");
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [circuitsConducteurs, setCircuitsConducteurs] = useState<
+    CircuitConducteurRaw[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [erreur, setErreur] = useState("");
 
   const [recherche, setRecherche] = useState("");
-  const [organisationsSelectionnees, setOrganisationsSelectionnees] =
-    useState<Organisation[]>([
-      "Autobus Breton",
-      "Autobus Champagne",
-      "Transport Sécuritaire",
-      "Groupe Breton",
-      "CSSBE",
-      "Autre",
-    ]);
-  const [typeFiltre, setTypeFiltre] = useState<TypeContact | "Tous">("Tous");
-  const [inclureInactifs, setInclureInactifs] = useState(false);
+  const [compagniesSelectionnees, setCompagniesSelectionnees] =
+    useState<Compagnie[]>([...compagnies]);
+  const [filtreConducteur, setFiltreConducteur] = useState<
+    "Tous" | "Remplaçants"
+  >("Tous");
+
+  const [organisationFiltre, setOrganisationFiltre] =
+    useState<Organisation | "Toutes">("Toutes");
 
   const [modalOuvert, setModalOuvert] = useState(false);
-  const [contactActifId, setContactActifId] = useState<string | null>(null);
-  const [form, setForm] = useState<Omit<Contact, "id">>(contactVide);
+  const [contactActifId, setContactActifId] = useState<string | null>(
+    null,
+  );
+  const [form, setForm] =
+    useState<Omit<Contact, "id">>(contactVide);
   const [saving, setSaving] = useState(false);
 
-  async function chargerContacts() {
+  async function chargerDonnees() {
     setLoading(true);
     setErreur("");
 
-    const { data, error } = await circuitSupabase
-      .from("contacts")
-      .select("*")
-      .order("organisation", { ascending: true })
-      .order("nom", { ascending: true });
+    const [contactsResult, circuitsResult] = await Promise.all([
+      circuitSupabase
+        .from("contacts")
+        .select("*")
+        .order("organisation", { ascending: true })
+        .order("nom", { ascending: true }),
+      circuitSupabase
+        .from("circuits_scolaires")
+        .select(
+          "id,circuit,unite,nom_conducteur,telephone,compagnie",
+        )
+        .order("circuit", { ascending: true }),
+    ]);
 
-    if (error) {
-      console.error("Erreur chargement contacts", error);
-      setErreur(error.message);
+    if (contactsResult.error) {
+      setErreur(contactsResult.error.message);
       setLoading(false);
       return;
     }
 
-    const mapped: Contact[] = (data ?? []).map((item: any) => ({
+    if (circuitsResult.error) {
+      setErreur(circuitsResult.error.message);
+      setLoading(false);
+      return;
+    }
+
+    const contactsMapped: Contact[] = (
+      contactsResult.data ?? []
+    ).map((item: any) => ({
       id: String(item.id),
       organisation: item.organisation as Organisation,
       organisationAutre: item.organisation_autre ?? "",
@@ -184,69 +249,242 @@ export default function ContactsPage() {
       actif: item.actif !== false,
     }));
 
-    setContacts(mapped);
+    const circuitsMapped: CircuitConducteurRaw[] = (
+      circuitsResult.data ?? []
+    )
+      .filter(
+        (item: any) =>
+          String(item?.nom_conducteur ?? "").trim() !== "",
+      )
+      .filter((item: any) =>
+        compagnies.includes(item.compagnie as Compagnie),
+      )
+      .map((item: any) => ({
+        id: String(item.id),
+        circuit: String(item.circuit ?? ""),
+        unite: String(item.unite ?? ""),
+        nomConducteur: String(item.nom_conducteur ?? ""),
+        telephone: String(item.telephone ?? ""),
+        compagnie: item.compagnie as Compagnie,
+      }));
+
+    setContacts(contactsMapped);
+    setCircuitsConducteurs(circuitsMapped);
     setLoading(false);
   }
 
   useEffect(() => {
-    void chargerContacts();
+    void chargerDonnees();
   }, []);
 
-  const contactsFiltres = useMemo(() => {
+  const contactsUrgence = useMemo(() => {
     const q = normalize(recherche);
 
-    return contacts.filter((contact) => {
-      if (!inclureInactifs && !contact.actif) return false;
-      if (!organisationsSelectionnees.includes(contact.organisation)) return false;
-      if (typeFiltre !== "Tous" && contact.typeContact !== typeFiltre) return false;
+    return contacts
+      .filter((contact) => contact.actif)
+      .filter((contact) => contact.typeContact === "Urgence")
+      .filter((contact) => {
+        if (!q) return true;
+        return [
+          organisationLabel(contact),
+          contact.nom,
+          contact.fonction,
+          contact.telephone,
+          contact.telephone2,
+          contact.courriel,
+          contact.notes,
+        ].some((value) => normalize(value).includes(q));
+      });
+  }, [contacts, recherche]);
 
-      if (!q) return true;
+  const conducteurs = useMemo(() => {
+    const map = new Map<string, ConducteurAffiche>();
 
-      return [
-        organisationLabel(contact),
-        contact.typeContact,
-        contact.nom,
-        contact.fonction,
-        contact.telephone,
-        contact.telephone2,
-        contact.courriel,
-        contact.notes,
-      ].some((value) => normalize(value).includes(q));
-    });
+    if (filtreConducteur === "Tous") {
+      for (const row of circuitsConducteurs) {
+        if (!compagniesSelectionnees.includes(row.compagnie)) {
+          continue;
+        }
+
+        const key = `circuit::${normalize(row.compagnie)}::${normalize(
+          row.nomConducteur,
+        )}`;
+
+        const actuel = map.get(key);
+        if (actuel) {
+          if (
+            row.circuit &&
+            !actuel.circuits.includes(row.circuit)
+          ) {
+            actuel.circuits.push(row.circuit);
+          }
+          if (row.unite && !actuel.unites.includes(row.unite)) {
+            actuel.unites.push(row.unite);
+          }
+          if (!actuel.telephone && row.telephone) {
+            actuel.telephone = row.telephone;
+          }
+        } else {
+          map.set(key, {
+            key,
+            source: "circuit",
+            contactId: null,
+            nom: row.nomConducteur,
+            telephone: row.telephone,
+            compagnie: row.compagnie,
+            circuits: row.circuit ? [row.circuit] : [],
+            unites: row.unite ? [row.unite] : [],
+          });
+        }
+      }
+    }
+
+    for (const contact of contacts) {
+      if (!contact.actif) continue;
+      if (contact.typeContact !== "Conducteur remplaçant") {
+        continue;
+      }
+
+      const compagnie = compagnieDepuisOrganisation(
+        contact.organisation,
+      );
+      if (!compagnie) continue;
+      if (!compagniesSelectionnees.includes(compagnie)) {
+        continue;
+      }
+
+      const key = `remplacant::${contact.id}`;
+
+      map.set(key, {
+        key,
+        source: "remplacant",
+        contactId: contact.id,
+        nom: contact.nom,
+        telephone: contact.telephone,
+        compagnie,
+        circuits: [],
+        unites: [],
+      });
+    }
+
+    const q = normalize(recherche);
+
+    return [...map.values()]
+      .filter((conducteur) => {
+        if (!q) return true;
+
+        return [
+          conducteur.nom,
+          conducteur.telephone,
+          conducteur.compagnie,
+          conducteur.circuits.join(" "),
+          conducteur.unites.join(" "),
+          conducteur.source === "remplacant"
+            ? "remplacant"
+            : "regulier",
+        ].some((value) => normalize(value).includes(q));
+      })
+      .sort((a, b) =>
+        a.nom.localeCompare(b.nom, "fr", {
+          sensitivity: "base",
+        }),
+      );
   }, [
     contacts,
+    circuitsConducteurs,
+    compagniesSelectionnees,
+    filtreConducteur,
     recherche,
-    organisationsSelectionnees,
-    typeFiltre,
-    inclureInactifs,
   ]);
 
-  const stats = useMemo(() => {
-    const actifs = contacts.filter((c) => c.actif);
-    return {
-      total: actifs.length,
-      urgence: actifs.filter((c) => c.typeContact === "Urgence").length,
-      remplacants: actifs.filter(
-        (c) => c.typeContact === "Conducteur remplaçant",
-      ).length,
-    };
-  }, [contacts]);
+  const contactsOrganisation = useMemo(() => {
+    const q = normalize(recherche);
 
-  function toggleOrganisation(org: Organisation) {
-    setOrganisationsSelectionnees((current) =>
-      current.includes(org)
-        ? current.filter((x) => x !== org)
-        : [...current, org],
+    return contacts
+      .filter((contact) => contact.actif)
+      .filter(
+        (contact) =>
+          contact.typeContact !== "Conducteur remplaçant",
+      )
+      .filter(
+        (contact) =>
+          organisationFiltre === "Toutes" ||
+          contact.organisation === organisationFiltre,
+      )
+      .filter((contact) => {
+        if (!q) return true;
+        return [
+          organisationLabel(contact),
+          contact.typeContact,
+          contact.nom,
+          contact.fonction,
+          contact.telephone,
+          contact.telephone2,
+          contact.courriel,
+          contact.notes,
+        ].some((value) => normalize(value).includes(q));
+      });
+  }, [contacts, recherche, organisationFiltre]);
+
+  const organisationsGroupes = useMemo(() => {
+    const groupes = new Map<string, Contact[]>();
+
+    for (const contact of contactsOrganisation) {
+      const label = organisationLabel(contact);
+      const arr = groupes.get(label) ?? [];
+      arr.push(contact);
+      groupes.set(label, arr);
+    }
+
+    return [...groupes.entries()].sort(([a], [b]) =>
+      a.localeCompare(b, "fr", { sensitivity: "base" }),
+    );
+  }, [contactsOrganisation]);
+
+  function toggleCompagnie(compagnie: Compagnie) {
+    setCompagniesSelectionnees((current) =>
+      current.includes(compagnie)
+        ? current.filter((c) => c !== compagnie)
+        : [...current, compagnie],
     );
   }
 
-  function selectionnerTous() {
-    setOrganisationsSelectionnees([...organisations]);
+  function toutesCompagnies() {
+    setCompagniesSelectionnees([...compagnies]);
   }
 
-  function ouvrirAjout() {
+  function ouvrirAjout(type?: TypeContact) {
+    let prochain: Omit<Contact, "id"> = {
+      ...contactVide,
+    };
+
+    if (type === "Urgence" || onglet === "urgence") {
+      prochain = {
+        ...prochain,
+        typeContact: "Urgence",
+      };
+    } else if (
+      type === "Conducteur remplaçant" ||
+      onglet === "conducteurs"
+    ) {
+      prochain = {
+        ...prochain,
+        organisation:
+          compagniesSelectionnees.length === 1
+            ? compagniesSelectionnees[0]
+            : "Autobus Breton",
+        typeContact: "Conducteur remplaçant",
+        fonction: "Conducteur remplaçant",
+      };
+    } else {
+      prochain = {
+        ...prochain,
+        typeContact: "Direction",
+      };
+    }
+
     setContactActifId(null);
-    setForm(contactVide);
+    setForm(prochain);
     setModalOuvert(true);
   }
 
@@ -267,6 +505,17 @@ export default function ContactsPage() {
     setModalOuvert(true);
   }
 
+  function modifierRemplacant(row: ConducteurAffiche) {
+    if (row.source !== "remplacant" || !row.contactId) {
+      return;
+    }
+
+    const contact = contacts.find(
+      (c) => c.id === row.contactId,
+    );
+    if (contact) ouvrirModification(contact);
+  }
+
   function fermerModal() {
     if (saving) return;
     setModalOuvert(false);
@@ -275,14 +524,15 @@ export default function ContactsPage() {
   }
 
   async function enregistrer() {
-    const nom = form.nom.trim();
-
-    if (!nom) {
-      alert("Le nom du contact est requis.");
+    if (!form.nom.trim()) {
+      alert("Le nom est obligatoire.");
       return;
     }
 
-    if (form.organisation === "Autre" && !form.organisationAutre.trim()) {
+    if (
+      form.organisation === "Autre" &&
+      !form.organisationAutre.trim()
+    ) {
       alert("Inscris le nom de l’organisation.");
       return;
     }
@@ -294,7 +544,7 @@ export default function ContactsPage() {
           ? form.organisationAutre.trim()
           : null,
       type_contact: form.typeContact,
-      nom,
+      nom: form.nom.trim(),
       fonction: form.fonction.trim(),
       telephone: form.telephone.trim(),
       telephone2: form.telephone2.trim(),
@@ -322,11 +572,16 @@ export default function ContactsPage() {
         if (error) throw error;
       }
 
-      await chargerContacts();
-      fermerModal();
+      await chargerDonnees();
+      setModalOuvert(false);
+      setContactActifId(null);
+      setForm(contactVide);
     } catch (error: any) {
-      console.error("Erreur enregistrement contact", error);
-      alert(error?.message ?? "Erreur pendant l’enregistrement du contact.");
+      console.error(error);
+      alert(
+        error?.message ??
+          "Erreur pendant l’enregistrement.",
+      );
     } finally {
       setSaving(false);
     }
@@ -334,9 +589,12 @@ export default function ContactsPage() {
 
   async function supprimerContact() {
     if (!contactActifId) return;
-    if (!confirm("Supprimer définitivement ce contact?")) return;
+    if (!confirm("Supprimer définitivement ce contact?")) {
+      return;
+    }
 
     setSaving(true);
+
     try {
       const { error } = await circuitSupabase
         .from("contacts")
@@ -345,17 +603,27 @@ export default function ContactsPage() {
 
       if (error) throw error;
 
-      await chargerContacts();
+      await chargerDonnees();
       setModalOuvert(false);
       setContactActifId(null);
       setForm(contactVide);
     } catch (error: any) {
-      console.error("Erreur suppression contact", error);
-      alert(error?.message ?? "Erreur pendant la suppression du contact.");
+      console.error(error);
+      alert(
+        error?.message ??
+          "Erreur pendant la suppression.",
+      );
     } finally {
       setSaving(false);
     }
   }
+
+  const titreAction =
+    onglet === "urgence"
+      ? "+ Ajouter un contact d’urgence"
+      : onglet === "conducteurs"
+        ? "+ Ajouter un remplaçant"
+        : "+ Ajouter un contact";
 
   return (
     <div style={{ paddingBottom: 40 }}>
@@ -364,182 +632,277 @@ export default function ContactsPage() {
           display: "flex",
           alignItems: "flex-start",
           justifyContent: "space-between",
-          gap: 16,
-          marginBottom: 16,
+          gap: 14,
+          marginBottom: 14,
         }}
       >
         <div>
-          <h1 style={{ margin: 0, fontSize: 28 }}>Contacts</h1>
-          <div style={{ marginTop: 5, color: "#667085" }}>
-            Répertoire central des contacts de Groupe Breton.
+          <h1 style={{ margin: 0, fontSize: 28 }}>
+            Contacts
+          </h1>
+          <div
+            style={{
+              color: "#667085",
+              marginTop: 4,
+            }}
+          >
+            Répertoire des contacts, conducteurs et
+            organisations.
           </div>
         </div>
 
-        <button className="btn-primary" type="button" onClick={ouvrirAjout}>
-          + Ajouter un contact
+        <button
+          className="btn-primary"
+          type="button"
+          onClick={() => ouvrirAjout()}
+        >
+          {titreAction}
         </button>
       </div>
 
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          gap: 12,
+          display: "flex",
+          gap: 8,
+          flexWrap: "wrap",
           marginBottom: 14,
         }}
       >
-        {[
-          ["Contacts actifs", stats.total],
-          ["Contacts d’urgence", stats.urgence],
-          ["Conducteurs remplaçants", stats.remplacants],
-        ].map(([label, value]) => (
-          <div className="card" key={String(label)} style={{ padding: 14 }}>
-            <div style={{ color: "#667085", fontSize: 13 }}>{label}</div>
-            <div style={{ fontSize: 24, fontWeight: 800, marginTop: 4 }}>
-              {value}
-            </div>
-          </div>
-        ))}
+        <button
+          type="button"
+          style={tabStyle(onglet === "urgence")}
+          onClick={() => {
+            setOnglet("urgence");
+            setRecherche("");
+          }}
+        >
+          Contacts d’urgence
+        </button>
+
+        <button
+          type="button"
+          style={tabStyle(onglet === "conducteurs")}
+          onClick={() => {
+            setOnglet("conducteurs");
+            setRecherche("");
+          }}
+        >
+          Conducteurs
+        </button>
+
+        <button
+          type="button"
+          style={tabStyle(onglet === "organisations")}
+          onClick={() => {
+            setOnglet("organisations");
+            setRecherche("");
+          }}
+        >
+          Organisations
+        </button>
       </div>
 
-      <div className="card" style={{ marginBottom: 14, padding: 14 }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(240px, 1fr) auto",
-            gap: 12,
-            alignItems: "center",
-          }}
-        >
-          <input
-            value={recherche}
-            onChange={(e) => setRecherche(e.target.value)}
-            placeholder="Rechercher un nom, téléphone, courriel, fonction, organisation..."
-            style={inputStyle}
-          />
+      <div
+        className="card"
+        style={{
+          padding: 14,
+          marginBottom: 14,
+        }}
+      >
+        <input
+          value={recherche}
+          onChange={(e) => setRecherche(e.target.value)}
+          placeholder={
+            onglet === "conducteurs"
+              ? "Conducteur, téléphone, circuit ou unité..."
+              : "Rechercher un nom, téléphone, courriel, fonction ou organisation..."
+          }
+          style={inputStyle}
+        />
 
-          <select
-            value={typeFiltre}
-            onChange={(e) =>
-              setTypeFiltre(e.target.value as TypeContact | "Tous")
-            }
-            style={{ ...inputStyle, minWidth: 210 }}
-          >
-            <option value="Tous">Tous les types</option>
-            {typesContact.map((type) => (
-              <option key={type} value={type}>
-                {type}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 7,
-            alignItems: "center",
-            marginTop: 12,
-          }}
-        >
-          <button
-            type="button"
+        {onglet === "conducteurs" && (
+          <div
             style={{
-              ...chipBase,
-              background:
-                organisationsSelectionnees.length === organisations.length
-                  ? "#111827"
-                  : "#fff",
-              color:
-                organisationsSelectionnees.length === organisations.length
-                  ? "#fff"
-                  : "#111827",
-            }}
-            onClick={selectionnerTous}
-          >
-            Tous
-          </button>
-
-          {organisations.map((org) => {
-            const active = organisationsSelectionnees.includes(org);
-            return (
-              <button
-                key={org}
-                type="button"
-                title={org}
-                style={{
-                  ...chipBase,
-                  background: active ? "#eef2ff" : "#fff",
-                  borderColor: active ? "#9aa7ff" : "#d6dce5",
-                  color: active ? "#2537a7" : "#667085",
-                }}
-                onClick={() => toggleOrganisation(org)}
-              >
-                {shortOrganisation(org)}
-              </button>
-            );
-          })}
-
-          <label
-            style={{
-              display: "inline-flex",
+              marginTop: 12,
+              display: "flex",
+              gap: 16,
               alignItems: "center",
-              gap: 7,
-              marginLeft: 4,
-              fontSize: 13,
-              color: "#475467",
-              cursor: "pointer",
+              flexWrap: "wrap",
             }}
           >
-            <input
-              type="checkbox"
-              checked={inclureInactifs}
-              onChange={(e) => setInclureInactifs(e.target.checked)}
-            />
-            Afficher les inactifs
-          </label>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-head">
-          <div>
-            <div className="card-title">
-              Répertoire
-              <span
+            <div
+              style={{
+                display: "flex",
+                gap: 7,
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <strong
                 style={{
-                  marginLeft: 9,
                   color: "#667085",
-                  fontWeight: 600,
                   fontSize: 13,
+                  marginRight: 2,
                 }}
               >
-                {contactsFiltres.length} contact
-                {contactsFiltres.length === 1 ? "" : "s"}
-              </span>
-            </div>
-            <div className="card-subtitle">
-              Double-clic sur une ligne pour modifier.
-            </div>
-          </div>
-        </div>
+                Transporteur
+              </strong>
 
-        {erreur ? (
-          <div style={{ padding: 16, color: "#b42318" }}>
-            Impossible de charger les contacts : {erreur}
+              {compagnies.map((compagnie) => (
+                <label
+                  key={compagnie}
+                  style={{
+                    ...filterButtonStyle(
+                      compagniesSelectionnees.includes(
+                        compagnie,
+                      ),
+                    ),
+                    display: "inline-flex",
+                    gap: 7,
+                    alignItems: "center",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={compagniesSelectionnees.includes(
+                      compagnie,
+                    )}
+                    onChange={() =>
+                      toggleCompagnie(compagnie)
+                    }
+                  />
+                  {shortCompagnie(compagnie)}
+                </label>
+              ))}
+
+              <button
+                type="button"
+                style={filterButtonStyle(
+                  compagniesSelectionnees.length ===
+                    compagnies.length,
+                )}
+                onClick={toutesCompagnies}
+              >
+                Tous
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 7,
+                alignItems: "center",
+              }}
+            >
+              <strong
+                style={{
+                  color: "#667085",
+                  fontSize: 13,
+                  marginRight: 2,
+                }}
+              >
+                Conducteurs
+              </strong>
+
+              <button
+                type="button"
+                style={filterButtonStyle(
+                  filtreConducteur === "Tous",
+                )}
+                onClick={() =>
+                  setFiltreConducteur("Tous")
+                }
+              >
+                Tous
+              </button>
+
+              <button
+                type="button"
+                style={filterButtonStyle(
+                  filtreConducteur === "Remplaçants",
+                )}
+                onClick={() =>
+                  setFiltreConducteur("Remplaçants")
+                }
+              >
+                Remplaçants
+              </button>
+            </div>
           </div>
-        ) : loading ? (
-          <div style={{ padding: 16, color: "#667085" }}>
-            Chargement des contacts...
+        )}
+
+        {onglet === "organisations" && (
+          <div
+            style={{
+              marginTop: 12,
+              maxWidth: 360,
+            }}
+          >
+            <select
+              value={organisationFiltre}
+              onChange={(e) =>
+                setOrganisationFiltre(
+                  e.target.value as
+                    | Organisation
+                    | "Toutes",
+                )
+              }
+              style={inputStyle}
+            >
+              <option value="Toutes">
+                Toutes les organisations
+              </option>
+              {organisations.map((organisation) => (
+                <option
+                  key={organisation}
+                  value={organisation}
+                >
+                  {organisation}
+                </option>
+              ))}
+            </select>
           </div>
-        ) : (
+        )}
+      </div>
+
+      {erreur ? (
+        <div className="card" style={{ padding: 16 }}>
+          <span style={{ color: "#b42318" }}>
+            Impossible de charger les données : {erreur}
+          </span>
+        </div>
+      ) : loading ? (
+        <div className="card" style={{ padding: 16 }}>
+          Chargement...
+        </div>
+      ) : onglet === "urgence" ? (
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <div className="card-title">
+                Contacts d’urgence
+                <span
+                  style={{
+                    marginLeft: 8,
+                    color: "#667085",
+                    fontSize: 13,
+                    fontWeight: 600,
+                  }}
+                >
+                  {contactsUrgence.length}
+                </span>
+              </div>
+              <div className="card-subtitle">
+                Double-clic sur une ligne pour modifier.
+              </div>
+            </div>
+          </div>
+
           <div className="table-wrap">
             <table className="list">
               <thead>
                 <tr>
                   <th>Organisation</th>
-                  <th>Type</th>
                   <th>Nom</th>
                   <th>Fonction</th>
                   <th>Téléphone</th>
@@ -548,65 +911,45 @@ export default function ContactsPage() {
                 </tr>
               </thead>
               <tbody>
-                {contactsFiltres.map((contact) => (
+                {contactsUrgence.map((contact) => (
                   <tr
-                    className="row"
                     key={contact.id}
-                    onDoubleClick={() => ouvrirModification(contact)}
-                    title="Double-clic pour modifier"
-                    style={{
-                      opacity: contact.actif ? 1 : 0.5,
-                      cursor: "pointer",
-                    }}
+                    className="row"
+                    style={{ cursor: "pointer" }}
+                    onDoubleClick={() =>
+                      ouvrirModification(contact)
+                    }
                   >
                     <td>
-                      <strong>{organisationLabel(contact)}</strong>
-                    </td>
-                    <td>
-                      <span
-                        style={{
-                          display: "inline-flex",
-                          padding: "4px 8px",
-                          borderRadius: 999,
-                          background: "#f2f4f7",
-                          fontSize: 12,
-                          fontWeight: 700,
-                        }}
-                      >
-                        {contact.typeContact}
-                      </span>
+                      <strong>
+                        {organisationLabel(contact)}
+                      </strong>
                     </td>
                     <td>
                       <strong>{contact.nom}</strong>
                     </td>
-                    <td>{contact.fonction || "—"}</td>
+                    <td>
+                      {contact.fonction || "—"}
+                    </td>
                     <td>
                       {contact.telephone ? (
                         <a
-                          href={telHref(contact.telephone)}
-                          onDoubleClick={(e) => e.stopPropagation()}
+                          href={telHref(
+                            contact.telephone,
+                          )}
                         >
                           {contact.telephone}
                         </a>
                       ) : (
                         "—"
                       )}
-                      {contact.telephone2 && (
-                        <div style={{ marginTop: 3 }}>
-                          <a
-                            href={telHref(contact.telephone2)}
-                            onDoubleClick={(e) => e.stopPropagation()}
-                          >
-                            {contact.telephone2}
-                          </a>
-                        </div>
-                      )}
                     </td>
                     <td>
                       {contact.courriel ? (
                         <a
-                          href={mailHref(contact.courriel)}
-                          onDoubleClick={(e) => e.stopPropagation()}
+                          href={mailHref(
+                            contact.courriel,
+                          )}
                         >
                           {contact.courriel}
                         </a>
@@ -614,32 +957,257 @@ export default function ContactsPage() {
                         "—"
                       )}
                     </td>
-                    <td
-                      style={{
-                        maxWidth: 280,
-                        whiteSpace: "normal",
-                      }}
-                    >
-                      {contact.notes || "—"}
-                    </td>
+                    <td>{contact.notes || "—"}</td>
                   </tr>
                 ))}
 
-                {!contactsFiltres.length && (
+                {!contactsUrgence.length && (
                   <tr>
-                    <td colSpan={7} className="muted">
-                      Aucun contact ne correspond aux filtres.
+                    <td colSpan={6} className="muted">
+                      Aucun contact d’urgence.
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      ) : onglet === "conducteurs" ? (
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <div className="card-title">
+                Conducteurs
+                <span
+                  style={{
+                    marginLeft: 8,
+                    color: "#667085",
+                    fontSize: 13,
+                    fontWeight: 600,
+                  }}
+                >
+                  {conducteurs.length}
+                </span>
+              </div>
+              <div className="card-subtitle">
+                Les conducteurs réguliers proviennent des
+                circuits scolaires. Les remplaçants sont
+                modifiables ici.
+              </div>
+            </div>
+          </div>
+
+          <div className="table-wrap">
+            <table className="list">
+              <thead>
+                <tr>
+                  <th>Nom</th>
+                  <th>Transporteur</th>
+                  <th>Statut</th>
+                  <th>Téléphone</th>
+                  <th>Circuit</th>
+                  <th>Unité</th>
+                </tr>
+              </thead>
+              <tbody>
+                {conducteurs.map((conducteur) => (
+                  <tr
+                    key={conducteur.key}
+                    className="row"
+                    style={{
+                      cursor:
+                        conducteur.source === "remplacant"
+                          ? "pointer"
+                          : "default",
+                    }}
+                    onDoubleClick={() =>
+                      modifierRemplacant(conducteur)
+                    }
+                    title={
+                      conducteur.source === "remplacant"
+                        ? "Double-clic pour modifier"
+                        : "Conducteur lié aux circuits scolaires"
+                    }
+                  >
+                    <td>
+                      <strong>{conducteur.nom}</strong>
+                    </td>
+                    <td>{conducteur.compagnie}</td>
+                    <td>
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          padding: "4px 8px",
+                          borderRadius: 999,
+                          background:
+                            conducteur.source ===
+                            "remplacant"
+                              ? "#fff4e5"
+                              : "#eefbf3",
+                          fontSize: 12,
+                          fontWeight: 800,
+                        }}
+                      >
+                        {conducteur.source ===
+                        "remplacant"
+                          ? "Remplaçant"
+                          : "Régulier"}
+                      </span>
+                    </td>
+                    <td>
+                      {conducteur.telephone ? (
+                        <a
+                          href={telHref(
+                            conducteur.telephone,
+                          )}
+                        >
+                          {conducteur.telephone}
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td>
+                      {conducteur.circuits.length
+                        ? conducteur.circuits.join(", ")
+                        : "—"}
+                    </td>
+                    <td>
+                      {conducteur.unites.length
+                        ? conducteur.unites.join(", ")
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+
+                {!conducteurs.length && (
+                  <tr>
+                    <td colSpan={6} className="muted">
+                      Aucun conducteur ne correspond aux
+                      filtres.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+          }}
+        >
+          {organisationsGroupes.map(
+            ([organisation, liste]) => (
+              <div
+                className="card"
+                key={organisation}
+              >
+                <div className="card-head">
+                  <div>
+                    <div className="card-title">
+                      {organisation}
+                      <span
+                        style={{
+                          marginLeft: 8,
+                          color: "#667085",
+                          fontSize: 13,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {liste.length} contact
+                        {liste.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="table-wrap">
+                  <table className="list">
+                    <thead>
+                      <tr>
+                        <th>Nom</th>
+                        <th>Type</th>
+                        <th>Fonction</th>
+                        <th>Téléphone</th>
+                        <th>Courriel</th>
+                        <th>Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {liste.map((contact) => (
+                        <tr
+                          key={contact.id}
+                          className="row"
+                          style={{
+                            cursor: "pointer",
+                          }}
+                          onDoubleClick={() =>
+                            ouvrirModification(contact)
+                          }
+                        >
+                          <td>
+                            <strong>
+                              {contact.nom}
+                            </strong>
+                          </td>
+                          <td>{contact.typeContact}</td>
+                          <td>
+                            {contact.fonction || "—"}
+                          </td>
+                          <td>
+                            {contact.telephone ? (
+                              <a
+                                href={telHref(
+                                  contact.telephone,
+                                )}
+                              >
+                                {contact.telephone}
+                              </a>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td>
+                            {contact.courriel ? (
+                              <a
+                                href={mailHref(
+                                  contact.courriel,
+                                )}
+                              >
+                                {contact.courriel}
+                              </a>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td>
+                            {contact.notes || "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ),
+          )}
+
+          {!organisationsGroupes.length && (
+            <div className="card" style={{ padding: 16 }}>
+              Aucun contact ne correspond aux filtres.
+            </div>
+          )}
+        </div>
+      )}
 
       {modalOuvert && (
-        <div className="modal-backdrop" onMouseDown={fermerModal}>
+        <div
+          className="modal-backdrop"
+          onMouseDown={fermerModal}
+        >
           <div
             className="modal-card"
             style={{
@@ -651,14 +1219,20 @@ export default function ContactsPage() {
             <div className="modal-head">
               <div>
                 <div className="modal-title">
-                  {contactActifId ? "Modifier le contact" : "Ajouter un contact"}
-                </div>
-                <div className="muted">
-                  Ce contact sera disponible dans le répertoire central.
+                  {contactActifId
+                    ? "Modifier le contact"
+                    : form.typeContact ===
+                        "Conducteur remplaçant"
+                      ? "Ajouter un conducteur remplaçant"
+                      : "Ajouter un contact"}
                 </div>
               </div>
 
-              <button type="button" className="btn-ghost" onClick={fermerModal}>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={fermerModal}
+              >
                 ✕
               </button>
             </div>
@@ -671,19 +1245,26 @@ export default function ContactsPage() {
               }}
             >
               <label>
-                <div className="field-label">Organisation</div>
+                <div className="field-label">
+                  Organisation
+                </div>
                 <select
                   style={inputStyle}
                   value={form.organisation}
                   onChange={(e) =>
                     setForm((f) => ({
                       ...f,
-                      organisation: e.target.value as Organisation,
+                      organisation:
+                        e.target
+                          .value as Organisation,
                     }))
                   }
                 >
                   {organisations.map((org) => (
-                    <option value={org} key={org}>
+                    <option
+                      value={org}
+                      key={org}
+                    >
                       {org}
                     </option>
                   ))}
@@ -691,19 +1272,26 @@ export default function ContactsPage() {
               </label>
 
               <label>
-                <div className="field-label">Type de contact</div>
+                <div className="field-label">
+                  Type de contact
+                </div>
                 <select
                   style={inputStyle}
                   value={form.typeContact}
                   onChange={(e) =>
                     setForm((f) => ({
                       ...f,
-                      typeContact: e.target.value as TypeContact,
+                      typeContact:
+                        e.target
+                          .value as TypeContact,
                     }))
                   }
                 >
                   {typesContact.map((type) => (
-                    <option value={type} key={type}>
+                    <option
+                      value={type}
+                      key={type}
+                    >
                       {type}
                     </option>
                   ))}
@@ -711,15 +1299,20 @@ export default function ContactsPage() {
               </label>
 
               {form.organisation === "Autre" && (
-                <label style={{ gridColumn: "1 / -1" }}>
-                  <div className="field-label">Nom de l’organisation</div>
+                <label
+                  style={{ gridColumn: "1 / -1" }}
+                >
+                  <div className="field-label">
+                    Nom de l’organisation
+                  </div>
                   <input
                     style={inputStyle}
                     value={form.organisationAutre}
                     onChange={(e) =>
                       setForm((f) => ({
                         ...f,
-                        organisationAutre: e.target.value,
+                        organisationAutre:
+                          e.target.value,
                       }))
                     }
                   />
@@ -727,72 +1320,107 @@ export default function ContactsPage() {
               )}
 
               <label>
-                <div className="field-label">Nom *</div>
+                <div className="field-label">
+                  Nom *
+                </div>
                 <input
                   style={inputStyle}
                   value={form.nom}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, nom: e.target.value }))
+                    setForm((f) => ({
+                      ...f,
+                      nom: e.target.value,
+                    }))
                   }
                 />
               </label>
 
               <label>
-                <div className="field-label">Fonction</div>
+                <div className="field-label">
+                  Fonction
+                </div>
                 <input
                   style={inputStyle}
                   value={form.fonction}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, fonction: e.target.value }))
+                    setForm((f) => ({
+                      ...f,
+                      fonction: e.target.value,
+                    }))
                   }
                 />
               </label>
 
               <label>
-                <div className="field-label">Téléphone</div>
+                <div className="field-label">
+                  Téléphone
+                </div>
                 <input
                   style={inputStyle}
                   value={form.telephone}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, telephone: e.target.value }))
+                    setForm((f) => ({
+                      ...f,
+                      telephone: e.target.value,
+                    }))
                   }
                 />
               </label>
 
               <label>
-                <div className="field-label">Téléphone 2</div>
+                <div className="field-label">
+                  Téléphone 2
+                </div>
                 <input
                   style={inputStyle}
                   value={form.telephone2}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, telephone2: e.target.value }))
+                    setForm((f) => ({
+                      ...f,
+                      telephone2:
+                        e.target.value,
+                    }))
                   }
                 />
               </label>
 
-              <label style={{ gridColumn: "1 / -1" }}>
-                <div className="field-label">Courriel</div>
+              <label
+                style={{ gridColumn: "1 / -1" }}
+              >
+                <div className="field-label">
+                  Courriel
+                </div>
                 <input
                   type="email"
                   style={inputStyle}
                   value={form.courriel}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, courriel: e.target.value }))
+                    setForm((f) => ({
+                      ...f,
+                      courriel: e.target.value,
+                    }))
                   }
                 />
               </label>
 
-              <label style={{ gridColumn: "1 / -1" }}>
-                <div className="field-label">Notes</div>
+              <label
+                style={{ gridColumn: "1 / -1" }}
+              >
+                <div className="field-label">
+                  Notes
+                </div>
                 <textarea
                   style={{
                     ...inputStyle,
-                    minHeight: 100,
+                    minHeight: 95,
                     resize: "vertical",
                   }}
                   value={form.notes}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, notes: e.target.value }))
+                    setForm((f) => ({
+                      ...f,
+                      notes: e.target.value,
+                    }))
                   }
                 />
               </label>
@@ -803,14 +1431,16 @@ export default function ContactsPage() {
                   display: "flex",
                   alignItems: "center",
                   gap: 8,
-                  cursor: "pointer",
                 }}
               >
                 <input
                   type="checkbox"
                   checked={form.actif}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, actif: e.target.checked }))
+                    setForm((f) => ({
+                      ...f,
+                      actif: e.target.checked,
+                    }))
                   }
                 />
                 Contact actif
@@ -839,7 +1469,12 @@ export default function ContactsPage() {
                 )}
               </div>
 
-              <div style={{ display: "flex", gap: 8 }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                }}
+              >
                 <button
                   type="button"
                   className="btn-ghost"
@@ -848,13 +1483,16 @@ export default function ContactsPage() {
                 >
                   Annuler
                 </button>
+
                 <button
                   type="button"
                   className="btn-primary"
                   onClick={enregistrer}
                   disabled={saving}
                 >
-                  {saving ? "Enregistrement..." : "Enregistrer"}
+                  {saving
+                    ? "Enregistrement..."
+                    : "Enregistrer"}
                 </button>
               </div>
             </div>
