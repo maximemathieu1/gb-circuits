@@ -1375,6 +1375,39 @@ export default function CircuitsScolairesPage() {
     direction,
   ]);
 
+  const compteCircuitsVehicules = useMemo(() => {
+    const circuitsComptables = new Set<string>();
+    const vehicules = new Set<string>();
+
+    for (const item of circuitsFiltres) {
+      const numeroCircuit = item.circuit.trim();
+      const unite = item.unite.trim();
+
+      if (unite) {
+        vehicules.add(unite.toLowerCase());
+      }
+
+      const circuitNormalise = numeroCircuit
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim()
+        .toUpperCase();
+
+      const estReserve =
+        circuitNormalise.includes("SPARE") ||
+        circuitNormalise.includes("RESERVE");
+
+      if (numeroCircuit && !estReserve) {
+        circuitsComptables.add(circuitNormalise);
+      }
+    }
+
+    return {
+      circuits: circuitsComptables.size,
+      vehicules: vehicules.size,
+    };
+  }, [circuitsFiltres]);
+
   const remplacantsFiltres =
     useMemo(() => {
       if (compagnie === "Toutes") {
@@ -2877,8 +2910,38 @@ export default function CircuitsScolairesPage() {
       <div className="card">
         <div className="card-head">
           <div>
-            <div className="card-title">
-              Circuits
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <div className="card-title">
+                Circuits
+              </div>
+
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "4px 9px",
+                  borderRadius: 999,
+                  background: "#f1f5f9",
+                  border: "1px solid #e2e8f0",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  color: "#334155",
+                }}
+              >
+                {compteCircuitsVehicules.circuits} circuit
+                {compteCircuitsVehicules.circuits > 1 ? "s" : ""}
+                {" · "}
+                {compteCircuitsVehicules.vehicules} véhicule
+                {compteCircuitsVehicules.vehicules > 1 ? "s" : ""}
+              </div>
             </div>
 
             <div className="card-subtitle">
@@ -2887,16 +2950,6 @@ export default function CircuitsScolairesPage() {
           </div>
 
           <div className="page-actions">
-            <button
-              className="btn"
-              type="button"
-              onClick={() => void synchroniserSamsara()}
-              disabled={samsaraSync}
-              title="Analyse tous les véhicules pour la semaine courante"
-            >
-              {samsaraSync ? "Samsara…" : "Actualiser Samsara"}
-            </button>
-
             <button
               className="btn"
               type="button"
