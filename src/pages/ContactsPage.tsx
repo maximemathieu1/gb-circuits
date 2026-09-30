@@ -71,16 +71,9 @@ const organisations: Organisation[] = [
   "Autre",
 ];
 
-const typesContact: TypeContact[] = [
-  "Urgence",
+const typesConducteur: TypeContact[] = [
   "Conducteur",
   "Conducteur remplaçant",
-  "Direction",
-  "CSSBE",
-  "Mécanique",
-  "Répartition",
-  "Fournisseur",
-  "Autre",
 ];
 
 const compagnies: Compagnie[] = [
@@ -222,8 +215,6 @@ export default function ContactsPage() {
     "Tous" | "Remplaçants"
   >("Tous");
 
-  const [organisationFiltre, setOrganisationFiltre] =
-    useState<Organisation | "Toutes">("Toutes");
 
   const [modalOuvert, setModalOuvert] = useState(false);
   const [contactActifId, setContactActifId] = useState<string | null>(
@@ -438,11 +429,6 @@ export default function ContactsPage() {
           contact.typeContact !== "Conducteur" &&
           contact.typeContact !== "Conducteur remplaçant",
       )
-      .filter(
-        (contact) =>
-          organisationFiltre === "Toutes" ||
-          contact.organisation === organisationFiltre,
-      )
       .filter((contact) => {
         if (!q) return true;
         return [
@@ -456,7 +442,7 @@ export default function ContactsPage() {
           contact.notes,
         ].some((value) => normalize(value).includes(q));
       });
-  }, [contacts, recherche, organisationFiltre]);
+  }, [contacts, recherche]);
 
   const organisationsGroupes = useMemo(() => {
     const internes = contactsOrganisation
@@ -502,6 +488,8 @@ export default function ContactsPage() {
     if (type === "Urgence" || onglet === "urgence") {
       prochain = {
         ...prochain,
+        organisation: "Autre",
+        organisationAutre: "",
         typeContact: "Urgence",
       };
     } else if (
@@ -514,12 +502,14 @@ export default function ContactsPage() {
           compagniesSelectionnees.length === 1
             ? compagniesSelectionnees[0]
             : "Autobus Breton",
-        typeContact: "Conducteur remplaçant",
-        fonction: "Conducteur remplaçant",
+        typeContact: "Conducteur",
+        fonction: "",
       };
     } else {
       prochain = {
         ...prochain,
+        organisation: "Autre",
+        organisationAutre: "",
         typeContact: "Direction",
       };
     }
@@ -662,7 +652,7 @@ export default function ContactsPage() {
     onglet === "urgence"
       ? "+ Ajouter un contact d’urgence"
       : onglet === "conducteurs"
-        ? "+ Ajouter un remplaçant"
+        ? "+ Ajouter un conducteur"
         : "+ Ajouter un contact";
 
   return (
@@ -871,38 +861,6 @@ export default function ContactsPage() {
           </div>
         )}
 
-        {onglet === "organisations" && (
-          <div
-            style={{
-              marginTop: 12,
-              maxWidth: 360,
-            }}
-          >
-            <select
-              value={organisationFiltre}
-              onChange={(e) =>
-                setOrganisationFiltre(
-                  e.target.value as
-                    | Organisation
-                    | "Toutes",
-                )
-              }
-              style={inputStyle}
-            >
-              <option value="Toutes">
-                Toutes les organisations
-              </option>
-              {organisations.map((organisation) => (
-                <option
-                  key={organisation}
-                  value={organisation}
-                >
-                  {organisation}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
       </div>
 
       {erreur ? (
@@ -1457,10 +1415,11 @@ export default function ContactsPage() {
                 <div className="modal-title">
                   {contactActifId
                     ? "Modifier le contact"
-                    : form.typeContact ===
-                        "Conducteur remplaçant"
-                      ? "Ajouter un conducteur remplaçant"
-                      : "Ajouter un contact"}
+                    : onglet === "conducteurs"
+                      ? "Ajouter un conducteur"
+                      : onglet === "urgence"
+                        ? "Ajouter un contact d’urgence"
+                        : "Ajouter un contact"}
                 </div>
               </div>
 
@@ -1484,76 +1443,80 @@ export default function ContactsPage() {
                 <div className="field-label">
                   Organisation
                 </div>
-                <select
-                  style={inputStyle}
-                  value={form.organisation}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      organisation:
-                        e.target
-                          .value as Organisation,
-                    }))
-                  }
-                >
-                  {organisations.map((org) => (
-                    <option
-                      value={org}
-                      key={org}
-                    >
-                      {org}
-                    </option>
-                  ))}
-                </select>
+                {onglet === "conducteurs" ? (
+                  <select
+                    style={inputStyle}
+                    value={form.organisation}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        organisation: e.target.value as Organisation,
+                        organisationAutre: "",
+                      }))
+                    }
+                  >
+                    {compagnies.map((org) => (
+                      <option value={org} key={org}>
+                        {org}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    style={inputStyle}
+                    value={
+                      form.organisation === "Autre"
+                        ? form.organisationAutre
+                        : form.organisation
+                    }
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        organisation: "Autre",
+                        organisationAutre: e.target.value,
+                      }))
+                    }
+                    placeholder="Inscrire l’organisation"
+                  />
+                )}
               </label>
 
               <label>
                 <div className="field-label">
-                  Type de contact
+                  {onglet === "conducteurs" ? "Type de conducteur" : "Type de contact"}
                 </div>
-                <select
-                  style={inputStyle}
-                  value={form.typeContact}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      typeContact:
-                        e.target
-                          .value as TypeContact,
-                    }))
-                  }
-                >
-                  {typesContact.map((type) => (
-                    <option
-                      value={type}
-                      key={type}
-                    >
-                      {type}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {form.organisation === "Autre" && (
-                <label
-                  style={{ gridColumn: "1 / -1" }}
-                >
-                  <div className="field-label">
-                    Nom de l’organisation
-                  </div>
-                  <input
+                {onglet === "conducteurs" ? (
+                  <select
                     style={inputStyle}
-                    value={form.organisationAutre}
+                    value={form.typeContact}
                     onChange={(e) =>
                       setForm((f) => ({
                         ...f,
-                        organisationAutre:
-                          e.target.value,
+                        typeContact: e.target.value as TypeContact,
                       }))
                     }
+                  >
+                    {typesConducteur.map((type) => (
+                      <option value={type} key={type}>
+                        {type === "Conducteur" ? "Conducteur régulier" : "Conducteur remplaçant"}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    style={inputStyle}
+                    value={form.typeContact}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        typeContact: e.target.value as TypeContact,
+                      }))
+                    }
+                    placeholder="Inscrire le type de contact"
                   />
-                </label>
-              )}
+                )}
+              </label>
+
 
               <label>
                 <div className="field-label">
