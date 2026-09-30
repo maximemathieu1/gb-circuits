@@ -140,6 +140,15 @@ function shortCompagnie(compagnie: Compagnie) {
   return "S";
 }
 
+function estOrganisationInterne(organisation: Organisation) {
+  return (
+    organisation === "Autobus Breton" ||
+    organisation === "Autobus Champagne" ||
+    organisation === "Transport Sécuritaire" ||
+    organisation === "Groupe Breton"
+  );
+}
+
 const inputStyle: React.CSSProperties = {
   width: "100%",
   minHeight: 42,
@@ -427,18 +436,27 @@ export default function ContactsPage() {
   }, [contacts, recherche, organisationFiltre]);
 
   const organisationsGroupes = useMemo(() => {
-    const groupes = new Map<string, Contact[]>();
+    const internes = contactsOrganisation
+      .filter((contact) => estOrganisationInterne(contact.organisation))
+      .sort((a, b) =>
+        organisationLabel(a).localeCompare(
+          organisationLabel(b),
+          "fr",
+          { sensitivity: "base" },
+        ),
+      );
 
-    for (const contact of contactsOrganisation) {
-      const label = organisationLabel(contact);
-      const arr = groupes.get(label) ?? [];
-      arr.push(contact);
-      groupes.set(label, arr);
-    }
+    const externes = contactsOrganisation
+      .filter((contact) => !estOrganisationInterne(contact.organisation))
+      .sort((a, b) =>
+        organisationLabel(a).localeCompare(
+          organisationLabel(b),
+          "fr",
+          { sensitivity: "base" },
+        ),
+      );
 
-    return [...groupes.entries()].sort(([a], [b]) =>
-      a.localeCompare(b, "fr", { sensitivity: "base" }),
-    );
+    return { internes, externes };
   }, [contactsOrganisation]);
 
   function toggleCompagnie(compagnie: Compagnie) {
@@ -1096,110 +1114,240 @@ export default function ContactsPage() {
         <div
           style={{
             display: "grid",
-            gap: 12,
+            gap: 18,
           }}
         >
-          {organisationsGroupes.map(
-            ([organisation, liste]) => (
-              <div
-                className="card"
-                key={organisation}
+          {/* INTERNE : une seule card */}
+          <div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                gap: 10,
+                marginBottom: 8,
+              }}
+            >
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 18,
+                }}
               >
-                <div className="card-head">
-                  <div>
-                    <div className="card-title">
-                      {organisation}
-                      <span
-                        style={{
-                          marginLeft: 8,
-                          color: "#667085",
-                          fontSize: 13,
-                          fontWeight: 600,
-                        }}
-                      >
-                        {liste.length} contact
-                        {liste.length === 1 ? "" : "s"}
-                      </span>
-                    </div>
+                Interne
+              </h2>
+
+              <span
+                style={{
+                  color: "#667085",
+                  fontSize: 13,
+                }}
+              >
+                Groupe Breton, Autobus Breton, Autobus Champagne et Transport Sécuritaire
+              </span>
+            </div>
+
+            <div className="card">
+              <div className="card-head">
+                <div>
+                  <div className="card-title">
+                    Contacts internes
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        color: "#667085",
+                        fontSize: 13,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {organisationsGroupes.internes.length} contact
+                      {organisationsGroupes.internes.length === 1 ? "" : "s"}
+                    </span>
                   </div>
                 </div>
+              </div>
 
-                <div className="table-wrap">
-                  <table className="list">
-                    <thead>
-                      <tr>
-                        <th>Nom</th>
-                        <th>Type</th>
-                        <th>Fonction</th>
-                        <th>Téléphone</th>
-                        <th>Courriel</th>
-                        <th>Notes</th>
+              <div className="table-wrap">
+                <table className="list">
+                  <thead>
+                    <tr>
+                      <th>Organisation</th>
+                      <th>Nom</th>
+                      <th>Type</th>
+                      <th>Fonction</th>
+                      <th>Téléphone</th>
+                      <th>Courriel</th>
+                      <th>Notes</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {organisationsGroupes.internes.map((contact) => (
+                      <tr
+                        key={contact.id}
+                        className="row"
+                        style={{ cursor: "pointer" }}
+                        onDoubleClick={() =>
+                          ouvrirModification(contact)
+                        }
+                      >
+                        <td>
+                          <strong>
+                            {organisationLabel(contact)}
+                          </strong>
+                        </td>
+                        <td>{contact.nom}</td>
+                        <td>{contact.typeContact}</td>
+                        <td>{contact.fonction || "—"}</td>
+                        <td>
+                          {contact.telephone ? (
+                            <a href={telHref(contact.telephone)}>
+                              {contact.telephone}
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td>
+                          {contact.courriel ? (
+                            <a href={mailHref(contact.courriel)}>
+                              {contact.courriel}
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td>{contact.notes || "—"}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {liste.map((contact) => (
-                        <tr
-                          key={contact.id}
-                          className="row"
-                          style={{
-                            cursor: "pointer",
-                          }}
-                          onDoubleClick={() =>
-                            ouvrirModification(contact)
-                          }
-                        >
-                          <td>
-                            <strong>
-                              {contact.nom}
-                            </strong>
-                          </td>
-                          <td>{contact.typeContact}</td>
-                          <td>
-                            {contact.fonction || "—"}
-                          </td>
-                          <td>
-                            {contact.telephone ? (
-                              <a
-                                href={telHref(
-                                  contact.telephone,
-                                )}
-                              >
-                                {contact.telephone}
-                              </a>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td>
-                            {contact.courriel ? (
-                              <a
-                                href={mailHref(
-                                  contact.courriel,
-                                )}
-                              >
-                                {contact.courriel}
-                              </a>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td>
-                            {contact.notes || "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                    ))}
+
+                    {!organisationsGroupes.internes.length && (
+                      <tr>
+                        <td colSpan={7} className="muted">
+                          Aucun contact interne ne correspond aux filtres.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* EXTERNE : une seule card */}
+          <div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                gap: 10,
+                marginBottom: 8,
+              }}
+            >
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 18,
+                }}
+              >
+                Externe
+              </h2>
+
+              <span
+                style={{
+                  color: "#667085",
+                  fontSize: 13,
+                }}
+              >
+                CSSBE et autres organisations externes
+              </span>
+            </div>
+
+            <div className="card">
+              <div className="card-head">
+                <div>
+                  <div className="card-title">
+                    Contacts externes
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        color: "#667085",
+                        fontSize: 13,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {organisationsGroupes.externes.length} contact
+                      {organisationsGroupes.externes.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
                 </div>
               </div>
-            ),
-          )}
 
-          {!organisationsGroupes.length && (
-            <div className="card" style={{ padding: 16 }}>
-              Aucun contact ne correspond aux filtres.
+              <div className="table-wrap">
+                <table className="list">
+                  <thead>
+                    <tr>
+                      <th>Organisation</th>
+                      <th>Nom</th>
+                      <th>Type</th>
+                      <th>Fonction</th>
+                      <th>Téléphone</th>
+                      <th>Courriel</th>
+                      <th>Notes</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {organisationsGroupes.externes.map((contact) => (
+                      <tr
+                        key={contact.id}
+                        className="row"
+                        style={{ cursor: "pointer" }}
+                        onDoubleClick={() =>
+                          ouvrirModification(contact)
+                        }
+                      >
+                        <td>
+                          <strong>
+                            {organisationLabel(contact)}
+                          </strong>
+                        </td>
+                        <td>{contact.nom}</td>
+                        <td>{contact.typeContact}</td>
+                        <td>{contact.fonction || "—"}</td>
+                        <td>
+                          {contact.telephone ? (
+                            <a href={telHref(contact.telephone)}>
+                              {contact.telephone}
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td>
+                          {contact.courriel ? (
+                            <a href={mailHref(contact.courriel)}>
+                              {contact.courriel}
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td>{contact.notes || "—"}</td>
+                      </tr>
+                    ))}
+
+                    {!organisationsGroupes.externes.length && (
+                      <tr>
+                        <td colSpan={7} className="muted">
+                          Aucun contact externe ne correspond aux filtres.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          )}
+          </div>
         </div>
       )}
 
