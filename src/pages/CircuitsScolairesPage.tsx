@@ -455,11 +455,6 @@ export default function CircuitsScolairesPage() {
   const [compagniesSelectionnees, setCompagniesSelectionnees] =
     useState<Compagnie[]>(toutesCompagnies);
 
-  const compagnie: Compagnie | "Toutes" =
-    compagniesSelectionnees.length === 1
-      ? compagniesSelectionnees[0]
-      : "Toutes";
-
   const compagnieParDefaut: Compagnie =
     compagniesSelectionnees[0] ?? "Autobus Breton";
 
