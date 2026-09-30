@@ -26,10 +26,28 @@ type CircuitDocument = {
   taille: number;
 };
 
+type ContactConducteur = {
+  id: string;
+  nom: string;
+  telephone: string;
+  organisation: string;
+  typeContact: string;
+  actif: boolean;
+};
+
+function normaliserAffectation(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+}
+
+function normaliserNumeroCircuit(value: string) {
+  return normaliserAffectation(value).replace(/^0+(?=\d)/, "");
+}
+
 type CircuitScolaire = {
   id: string;
   circuit: string;
   unite: string;
+  conducteurContactId: string | null;
   nomConducteur: string;
   telephone: string;
   localisation: string;
@@ -120,6 +138,7 @@ const fichiersAcceptes =
 const circuitVide: Omit<CircuitScolaire, "id"> = {
   circuit: "",
   unite: "",
+  conducteurContactId: null,
   nomConducteur: "",
   telephone: "",
   localisation: "",
@@ -446,6 +465,49 @@ export default function CircuitsScolairesPage() {
       documents: [],
     });
 
+  const [contactsConducteurs, setContactsConducteurs] = useState<ContactConducteur[]>([]);
+  const [contactsChargement, setContactsChargement] = useState(false);
+  const [contactsErreur, setContactsErreur] = useState("");
+  const [rechercheConducteur, setRechercheConducteur] = useState("");
+
+  async function chargerContactsConducteurs() {
+    setContactsChargement(true);
+    setContactsErreur("");
+    try {
+      const { data, error } = await circuitSupabase.from("contacts")
+        .select("id,nom,telephone,organisation,type_contact,actif")
+        .in("type_contact", ["Conducteur", "Conducteur remplaçant"])
+        .order("nom", { ascending: true });
+      if (error) throw error;
+      setContactsConducteurs((data ?? []).map((item) => ({
+        id: String(item.id), nom: item.nom ?? "", telephone: item.telephone ?? "",
+        organisation: item.organisation ?? "", typeContact: item.type_contact ?? "",
+        actif: item.actif !== false,
+      })));
+    } catch (error) {
+      const message = (error as { message?: string })?.message;
+      setContactsErreur(message || "Impossible de charger les conducteurs des contacts.");
+    } finally {
+      setContactsChargement(false);
+    }
+  }
+
+  const conducteurSelectionneId = circuitForm.conducteurContactId ||
+    contactsConducteurs.find((contact) => contact.organisation === circuitForm.compagnie &&
+      normaliserAffectation(contact.nom) === normaliserAffectation(circuitForm.nomConducteur))?.id || "";
+
+  const conducteursDisponibles = contactsConducteurs.filter((contact) =>
+    contact.id === conducteurSelectionneId ||
+    (contact.actif && (contact.organisation === circuitForm.compagnie || contact.organisation === "Groupe Breton") &&
+      normaliserAffectation(`${contact.nom} ${contact.telephone}`).includes(normaliserAffectation(rechercheConducteur)))
+  );
+
+  function selectionnerConducteur(id: string) {
+    const contact = contactsConducteurs.find((item) => item.id === id);
+    setCircuitForm((prev) => ({ ...prev, conducteurContactId: contact?.id ?? null,
+      nomConducteur: contact?.nom ?? "", telephone: contact?.telephone ?? "" }));
+  }
+
   const [fichiersEnAttente, setFichiersEnAttente] =
     useState<File[]>([]);
 
@@ -506,6 +568,7 @@ export default function CircuitsScolairesPage() {
           circuit,
           unite,
           nom_conducteur,
+          conducteur_contact_id,
           telephone,
           localisation,
           compagnie,
@@ -532,6 +595,7 @@ export default function CircuitsScolairesPage() {
         id: item.id,
         circuit: item.circuit || "",
         unite: item.unite || "",
+        conducteurContactId: item.conducteur_contact_id ?? null,
         nomConducteur:
           item.nom_conducteur || "",
         telephone: item.telephone || "",
@@ -1303,6 +1367,8 @@ export default function CircuitsScolairesPage() {
    */
 
   function ouvrirAjoutCircuit() {
+    setRechercheConducteur("");
+    void chargerContactsConducteurs();
     setCircuitActifId(null);
 
     setCircuitForm({
@@ -1326,11 +1392,14 @@ export default function CircuitsScolairesPage() {
     circuit: CircuitScolaire
   ) {
     setCircuitActifId(circuit.id);
+    setRechercheConducteur("");
+    void chargerContactsConducteurs();
 
     setCircuitForm({
       circuit: circuit.circuit,
       unite: circuit.unite,
 
+      conducteurContactId: circuit.conducteurContactId,
       nomConducteur:
         circuit.nomConducteur,
 
@@ -1664,6 +1733,7 @@ export default function CircuitsScolairesPage() {
    */
 
   async function enregistrerCircuit() {
+    if (operationEnCours || contactsChargement) return;
     const numero =
       circuitForm.circuit.trim();
 
@@ -1677,6 +1747,38 @@ export default function CircuitsScolairesPage() {
 
     try {
       setOperationEnCours(true);
+
+      // Vérifier les affectations actuelles, même si la liste affichée est ancienne.
+      const { data: affectations, error: affectationsErreur } = await circuitSupabase
+        .from("circuits_scolaires")
+        .select("id,circuit,compagnie,nom_conducteur,conducteur_contact_id");
+      if (affectationsErreur) throw affectationsErreur;
+      const contactChoisi = contactsConducteurs.find((contact) => contact.id === conducteurSelectionneId);
+      const conducteurId = contactChoisi?.id ?? circuitForm.conducteurContactId;
+      const nomConducteur = contactChoisi?.nom ?? circuitForm.nomConducteur.trim();
+      const telephoneConducteur = contactChoisi?.telephone ?? circuitForm.telephone.trim();
+      const autresAffectations = (affectations ?? []).filter((item) => {
+        if (String(item.id) === circuitActifId || !nomConducteur) return false;
+        const memeConducteur = item.conducteur_contact_id && conducteurId
+          ? item.conducteur_contact_id === conducteurId
+          : item.compagnie === circuitForm.compagnie &&
+            normaliserAffectation(item.nom_conducteur ?? "") === normaliserAffectation(nomConducteur);
+        const autreCircuit = item.compagnie !== circuitForm.compagnie ||
+          normaliserNumeroCircuit(item.circuit ?? "") !== normaliserNumeroCircuit(numero);
+        return memeConducteur && autreCircuit;
+      });
+      const circuitInitial = circuits.find((item) => item.id === circuitActifId);
+      const memeAffectation = !!circuitInitial && circuitInitial.compagnie === circuitForm.compagnie &&
+        normaliserNumeroCircuit(circuitInitial.circuit) === normaliserNumeroCircuit(numero) &&
+        (circuitInitial.conducteurContactId && conducteurId
+          ? circuitInitial.conducteurContactId === conducteurId
+          : normaliserAffectation(circuitInitial.nomConducteur) === normaliserAffectation(nomConducteur));
+      if (!memeAffectation && autresAffectations.length > 0) {
+        const numeros = [...new Set(autresAffectations.map((item) =>
+          item.compagnie === circuitForm.compagnie ? item.circuit : `${item.circuit} (${item.compagnie})`
+        ))].join(", ");
+        if (!window.confirm(`${nomConducteur} est déjà attribué ${autresAffectations.length === 1 ? "au circuit" : "aux circuits"} ${numeros}.\n\nVoulez-vous procéder au changement?`)) return;
+      }
 
       let circuitId =
         circuitActifId;
@@ -1693,11 +1795,9 @@ export default function CircuitsScolairesPage() {
               unite:
                 circuitForm.unite.trim(),
 
-              nom_conducteur:
-                circuitForm.nomConducteur.trim(),
-
-              telephone:
-                circuitForm.telephone.trim(),
+              conducteur_contact_id: conducteurId,
+              nom_conducteur: nomConducteur,
+              telephone: telephoneConducteur,
 
               localisation:
                 circuitForm.localisation.trim(),
@@ -1731,11 +1831,9 @@ export default function CircuitsScolairesPage() {
               unite:
                 circuitForm.unite.trim(),
 
-              nom_conducteur:
-                circuitForm.nomConducteur.trim(),
-
-              telephone:
-                circuitForm.telephone.trim(),
+              conducteur_contact_id: conducteurId,
+              nom_conducteur: nomConducteur,
+              telephone: telephoneConducteur,
 
               localisation:
                 circuitForm.localisation.trim(),
@@ -1771,7 +1869,10 @@ export default function CircuitsScolairesPage() {
 
       await chargerCircuits();
 
-      fermerModalCircuit();
+      // La fermeture doit pouvoir se faire après l’enregistrement réussi.
+      setModalCircuitOuvert(false);
+      setCircuitActifId(null);
+      setFichiersEnAttente([]);
     } catch (error) {
       console.error(
         "Erreur sauvegarde circuit",
@@ -1779,7 +1880,7 @@ export default function CircuitsScolairesPage() {
       );
 
       alert(
-        "Erreur pendant l’enregistrement du circuit."
+        `Erreur pendant l’enregistrement du circuit.\n${(error as { message?: string })?.message || "Cause inconnue."}`
       );
     } finally {
       setOperationEnCours(false);
@@ -3438,6 +3539,9 @@ export default function CircuitsScolairesPage() {
                         compagnie:
                           e.target
                             .value as Compagnie,
+                        conducteurContactId: null,
+                        nomConducteur: "",
+                        telephone: "",
                       })
                     )
                   }
@@ -3463,20 +3567,39 @@ export default function CircuitsScolairesPage() {
 
                 <input
                   className="input"
-                  value={
-                    circuitForm.nomConducteur
-                  }
-                  onChange={(e) =>
-                    setCircuitForm(
-                      (prev) => ({
-                        ...prev,
-
-                        nomConducteur:
-                          e.target.value,
-                      })
-                    )
-                  }
+                  aria-label="Rechercher un conducteur dans les contacts"
+                  placeholder="Rechercher un conducteur…"
+                  value={rechercheConducteur}
+                  onChange={(e) => setRechercheConducteur(e.target.value)}
+                  style={{ marginBottom: 6 }}
                 />
+                <select
+                  className="input"
+                  aria-label="Nom conducteur"
+                  value={conducteurSelectionneId || (circuitForm.nomConducteur ? "__actuel__" : "")}
+                  disabled={contactsChargement || operationEnCours || !!contactsErreur}
+                  onChange={(e) => selectionnerConducteur(e.target.value)}
+                >
+                  <option value="">{contactsChargement ? "Chargement…" : "Aucun conducteur"}</option>
+                  {circuitForm.nomConducteur && !conducteursDisponibles.some((contact) => contact.id === conducteurSelectionneId) && (
+                    <option value={conducteurSelectionneId || "__actuel__"}>
+                      {circuitForm.nomConducteur} · affectation actuelle
+                    </option>
+                  )}
+                  {conducteursDisponibles.map((contact) => (
+                    <option key={contact.id} value={contact.id}>
+                      {contact.nom}{contact.typeContact === "Conducteur remplaçant" ? " · remplaçant" : ""}{!contact.actif ? " · inactif" : ""}
+                    </option>
+                  ))}
+                </select>
+                <div className="muted" style={{ fontSize: 12, marginTop: 5 }}>
+                  Sélection depuis les contacts. Le téléphone est rempli automatiquement.
+                </div>
+                {contactsErreur && (
+                  <div role="alert" style={{ color: "#b91c1c", fontSize: 12, marginTop: 5 }}>
+                    {contactsErreur} <button type="button" className="ghost" onClick={() => void chargerContactsConducteurs()}>Réessayer</button>
+                  </div>
+                )}
               </div>
 
               <div className="field">
@@ -3489,6 +3612,7 @@ export default function CircuitsScolairesPage() {
                   value={
                     circuitForm.telephone
                   }
+                  readOnly={!!conducteurSelectionneId}
                   onChange={(e) =>
                     setCircuitForm(
                       (prev) => ({
