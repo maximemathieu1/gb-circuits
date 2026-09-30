@@ -1198,6 +1198,29 @@ export default function CircuitsScolairesPage() {
     );
 
     resultat.sort((a, b) => {
+      const normaliserCircuit = (value: string) =>
+        value
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim()
+          .toUpperCase();
+
+      const circuitA = normaliserCircuit(a.circuit);
+      const circuitB = normaliserCircuit(b.circuit);
+
+      const estReserveA =
+        circuitA.includes("SPARE") ||
+        circuitA.includes("RESERVE");
+
+      const estReserveB =
+        circuitB.includes("SPARE") ||
+        circuitB.includes("RESERVE");
+
+      // Les vrais circuits restent toujours au-dessus.
+      if (estReserveA !== estReserveB) {
+        return estReserveA ? 1 : -1;
+      }
+
       const valeurA =
         a[tri].toLowerCase();
 
@@ -2202,7 +2225,7 @@ export default function CircuitsScolairesPage() {
           marginBottom: 14,
         }}
       >
-        <div className="form-grid">
+        <div style={{ display: "grid", gap: 10 }}>
           <div className="field">
             <div className="label">
               Recherche
