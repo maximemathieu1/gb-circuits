@@ -367,6 +367,8 @@ export default function CircuitsScolairesPage() {
   const [gpsChargement, setGpsChargement] = useState(false);
   const [gpsErreur, setGpsErreur] = useState<string | null>(null);
   const [suiviGps, setSuiviGps] = useState(true);
+  const [gpsResumeMobileOuvert, setGpsResumeMobileOuvert] =
+    useState(false);
   const [destinationGps, setDestinationGps] = useState<{
     longitude: number;
     latitude: number;
@@ -941,6 +943,7 @@ export default function CircuitsScolairesPage() {
     setVehiculeGpsActif(live);
     setGpsErreur(null);
     setSuiviGps(true);
+    setGpsResumeMobileOuvert(false);
     setModalGpsOuvert(true);
     void rafraichirVehiculeGps(circuit, true);
   }
@@ -951,6 +954,7 @@ export default function CircuitsScolairesPage() {
     etaRequestIdRef.current += 1;
 
     setModalGpsOuvert(false);
+    setGpsResumeMobileOuvert(false);
     setCircuitGpsActif(null);
     setVehiculeGpsActif(null);
     setGpsErreur(null);
@@ -2895,15 +2899,75 @@ export default function CircuitsScolairesPage() {
 
             <div
               style={{
+                position: "relative",
                 display: "grid",
-                gridTemplateColumns: "minmax(250px, 320px) minmax(0, 1fr)",
+                gridTemplateColumns: isMobilePage
+                  ? "minmax(0, 1fr)"
+                  : "minmax(250px, 320px) minmax(0, 1fr)",
                 flex: 1,
                 minHeight: 0,
                 overflow: "hidden",
               }}
             >
+              {isMobilePage && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setGpsResumeMobileOuvert((value) => !value)
+                  }
+                  aria-label="Afficher les informations GPS"
+                  title="Afficher les informations GPS"
+                  style={{
+                    position: "absolute",
+                    top: 12,
+                    left: 12,
+                    zIndex: 8,
+                    width: 44,
+                    height: 44,
+                    borderRadius: 12,
+                    border: "1px solid #d7dee8",
+                    background: "rgba(255,255,255,.96)",
+                    boxShadow: "0 2px 10px rgba(15,23,42,.14)",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    gap: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  <span style={{ width: 22, height: 3, borderRadius: 99, background: "#10233f" }} />
+                  <span style={{ width: 22, height: 3, borderRadius: 99, background: "#10233f" }} />
+                  <span style={{ width: 22, height: 3, borderRadius: 99, background: "#10233f" }} />
+                </button>
+              )}
+
+              {isMobilePage && gpsResumeMobileOuvert && (
+                <div
+                  onClick={() => setGpsResumeMobileOuvert(false)}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    zIndex: 6,
+                    background: "rgba(15,23,42,.34)",
+                  }}
+                />
+              )}
+
               <div
                 style={{
+                  position: isMobilePage ? "absolute" : "relative",
+                  zIndex: isMobilePage ? 7 : 1,
+                  top: 0,
+                  bottom: 0,
+                  left: 0,
+                  width: isMobilePage ? "min(86vw, 340px)" : "auto",
+                  transform: isMobilePage
+                    ? gpsResumeMobileOuvert
+                      ? "translateX(0)"
+                      : "translateX(-105%)"
+                    : "none",
+                  transition: isMobilePage ? "transform 220ms ease" : undefined,
                   padding: 18,
                   borderRight: "1px solid #e5e7eb",
                   background: "#fff",
@@ -2912,8 +2976,42 @@ export default function CircuitsScolairesPage() {
                   gap: 12,
                   overflowY: "auto",
                   minHeight: 0,
+                  height: "100%",
+                  boxSizing: "border-box",
+                  boxShadow:
+                    isMobilePage && gpsResumeMobileOuvert
+                      ? "8px 0 24px rgba(15,23,42,.16)"
+                      : "none",
                 }}
               >
+                {isMobilePage && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      marginBottom: -2,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setGpsResumeMobileOuvert(false)}
+                      aria-label="Fermer le résumé GPS"
+                      style={{
+                        width: 38,
+                        height: 38,
+                        borderRadius: 10,
+                        border: "1px solid #e5e7eb",
+                        background: "#f8fafc",
+                        fontSize: 24,
+                        lineHeight: 1,
+                        cursor: "pointer",
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+
                 <div
                   style={{
                     display: "inline-flex",
@@ -3148,6 +3246,7 @@ export default function CircuitsScolairesPage() {
                   minHeight: 0,
                   minWidth: 0,
                   height: "100%",
+                  gridColumn: isMobilePage ? "1 / -1" : undefined,
                 }}
               >
                 <div

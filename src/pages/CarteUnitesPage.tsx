@@ -580,7 +580,17 @@ export default function CarteUnitesPage() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [followKey, setFollowKey] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isMobilePage, setIsMobilePage] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 900px)").matches,
+  );
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () =>
+      typeof window !== "undefined"
+        ? !window.matchMedia("(max-width: 900px)").matches
+        : true,
+  );
   const [destination, setDestination] = useState<Destination | null>(null);
   const [eta, setEta] = useState<EtaInfo | null>(null);
   const [etaLoading, setEtaLoading] = useState(false);
@@ -613,6 +623,25 @@ export default function CarteUnitesPage() {
   const [roadSpeedError, setRoadSpeedError] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(30);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 900px)");
+
+    const syncMobile = () => {
+      setIsMobilePage(media.matches);
+
+      if (media.matches) {
+        setSidebarOpen(false);
+      }
+    };
+
+    syncMobile();
+    media.addEventListener("change", syncMobile);
+
+    return () => {
+      media.removeEventListener("change", syncMobile);
+    };
+  }, []);
 
   useEffect(() => {
     schoolsRef.current = schools;
@@ -926,7 +955,10 @@ export default function CarteUnitesPage() {
   const selectVehicle = useCallback((key: string, center = false) => {
     const vehicle = latestDisplayRef.current.find((item) => item.key === key);
     setSelectedKey(key);
-    setSidebarOpen(true);
+
+    if (!window.matchMedia("(max-width: 900px)").matches) {
+      setSidebarOpen(true);
+    }
 
     if (center && vehicle && validCoordinate(vehicle)) {
       mapRef.current?.easeTo({
@@ -2875,7 +2907,12 @@ export default function CarteUnitesPage() {
 
     lastAutoFollowSearchRef.current = q;
     setSelectedKey(target.key);
-    setSidebarOpen(true);
+
+    if (!window.matchMedia("(max-width: 900px)").matches) {
+      setSidebarOpen(true);
+    } else {
+      setSidebarOpen(false);
+    }
 
     clearRoute();
     setHistoryOpen(false);
@@ -3091,19 +3128,96 @@ export default function CarteUnitesPage() {
         .fleet-error { color:#b91c1c; font-size:11px; margin-top:5px; }
         .fleet-page:fullscreen { background:#fff; }
         .mapboxgl-ctrl-group { border-radius:10px!important; overflow:hidden; box-shadow:0 5px 18px rgba(15,23,42,.16)!important; }
+        .fleet-sidebar-overlay { display:none; }
+
+        @media (max-width:900px) {
+          .fleet-body { position:relative; }
+
+          .fleet-sidebar {
+            position:absolute;
+            z-index:35;
+            top:0;
+            bottom:0;
+            left:0;
+            width:min(86vw,340px);
+            flex-basis:auto;
+            transform:translateX(0);
+            transition:transform .22s ease;
+            box-shadow:8px 0 28px rgba(15,23,42,.18);
+          }
+
+          .fleet-sidebar.closed {
+            width:min(86vw,340px);
+            flex-basis:auto;
+            transform:translateX(-105%);
+            border-right:1px solid #e2e8f0;
+          }
+
+          .fleet-map-shell {
+            width:100%;
+            flex:1 1 auto;
+          }
+
+          .fleet-sidebar-overlay {
+            display:block;
+            position:absolute;
+            z-index:30;
+            inset:0;
+            background:rgba(15,23,42,.32);
+          }
+
+          .fleet-sidebar-toggle.mobile-hamburger {
+            top:12px;
+            left:12px;
+            transform:none;
+            width:44px;
+            height:44px;
+            border:1px solid #d7dee8;
+            border-radius:12px;
+            background:rgba(255,255,255,.97);
+            box-shadow:0 3px 12px rgba(15,23,42,.16);
+            z-index:45;
+          }
+
+          .fleet-sidebar-toggle.mobile-hamburger.closed {
+            left:12px;
+          }
+
+          .fleet-mobile-bars {
+            display:flex!important;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            gap:4px;
+            width:100%;
+            height:100%;
+            transform:none!important;
+          }
+
+          .fleet-mobile-bars i {
+            display:block;
+            width:21px;
+            height:3px;
+            border-radius:999px;
+            background:#10233f;
+          }
+
+          .fleet-mobile-close {
+            display:block;
+            font-size:28px;
+            line-height:1;
+            transform:none!important;
+          }
+        }
+
         @media (max-width:1100px) {
           .fleet-header { flex-wrap:wrap; }
           .fleet-search { order:3; flex-basis:100%; max-width:none; }
         }
         @media (max-width:800px) {
-          .fleet-sidebar { flex-basis:340px; width:340px; }
           .fleet-title-wrap { min-width:150px; }
         }
         @media (max-width:650px) {
-          .fleet-sidebar { flex-basis:min(380px,90vw); width:min(380px,90vw); }
-          .fleet-sidebar.closed { flex-basis:0; width:0; }
-          .fleet-sidebar-toggle { left:calc(min(380px,90vw) - 14px); }
-          .fleet-sidebar-toggle.closed { left:0; }
           .fleet-header-actions { width:100%; margin-left:0; justify-content:flex-start; }
         }
       `}</style>
@@ -3613,15 +3727,40 @@ export default function CarteUnitesPage() {
         {selectedVehicle && (
           <button
             type="button"
-            className={`fleet-sidebar-toggle ${sidebarOpen ? "" : "closed"}`}
+            className={`fleet-sidebar-toggle ${sidebarOpen ? "" : "closed"} ${
+              isMobilePage ? "mobile-hamburger" : ""
+            }`}
             onClick={toggleSidebar}
             title={sidebarOpen ? "Masquer le panneau" : "Afficher le panneau"}
             aria-label={
               sidebarOpen ? "Masquer le panneau" : "Afficher le panneau"
             }
           >
-            <span>{sidebarOpen ? "‹" : "›"}</span>
+            {isMobilePage ? (
+              sidebarOpen ? (
+                <span className="fleet-mobile-close">×</span>
+              ) : (
+                <span className="fleet-mobile-bars" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              )
+            ) : (
+              <span>{sidebarOpen ? "‹" : "›"}</span>
+            )}
           </button>
+        )}
+
+        {isMobilePage && selectedVehicle && sidebarOpen && (
+          <div
+            className="fleet-sidebar-overlay"
+            onClick={() => {
+              setSidebarOpen(false);
+              window.requestAnimationFrame(() => mapRef.current?.resize());
+              window.setTimeout(() => mapRef.current?.resize(), 220);
+            }}
+          />
         )}
 
         <div className="fleet-map-shell">
