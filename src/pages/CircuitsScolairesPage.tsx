@@ -2826,142 +2826,6 @@ export default function CircuitsScolairesPage() {
         </div>
       </div>
 
-      {/* CONTACTS URGENCE */}
-
-      <div
-        className="card"
-        style={{
-          marginBottom: 14,
-        }}
-      >
-        <div className="card-head">
-          <div>
-            <div className="card-title">
-              Contacts d’urgence
-            </div>
-
-            <div className="card-subtitle">
-              Contacts importants par organisation.
-            </div>
-          </div>
-
-          <button
-            className="btn-primary"
-            type="button"
-            onClick={
-              ouvrirAjoutContact
-            }
-          >
-            + Ajouter un contact
-          </button>
-        </div>
-
-        <div className="table-wrap">
-          <table className="list">
-            <thead>
-              <tr>
-                <th>
-                  Organisation
-                </th>
-
-                <th>Nom</th>
-                <th>Fonction</th>
-                <th>Téléphone</th>
-                <th>Téléphone 2</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {contacts.map(
-                (contact) => (
-                  <tr
-                    className="row"
-                    key={contact.id}
-                    onDoubleClick={() =>
-                      ouvrirModificationContact(
-                        contact
-                      )
-                    }
-                    title="Double-clic pour modifier"
-                  >
-                    <td>
-                      {nomOrganisation(
-                        contact
-                      )}
-                    </td>
-
-                    <td>
-                      <strong>
-                        {contact.nom}
-                      </strong>
-                    </td>
-
-                    <td>
-                      {contact.fonction ||
-                        "—"}
-                    </td>
-
-                    <td>
-                      {contact.telephone ? (
-                        <a
-                          href={telHref(
-                            contact.telephone
-                          )}
-                          onDoubleClick={(
-                            e
-                          ) =>
-                            e.stopPropagation()
-                          }
-                        >
-                          {
-                            contact.telephone
-                          }
-                        </a>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-
-                    <td>
-                      {contact.telephone2 ? (
-                        <a
-                          href={telHref(
-                            contact.telephone2
-                          )}
-                          onDoubleClick={(
-                            e
-                          ) =>
-                            e.stopPropagation()
-                          }
-                        >
-                          {
-                            contact.telephone2
-                          }
-                        </a>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                  </tr>
-                )
-              )}
-
-              {contacts.length ===
-                0 && (
-                <tr>
-                  <td
-                    colSpan={5}
-                    className="muted"
-                  >
-                    Aucun contact d’urgence.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
       {/* CIRCUITS */}
 
       <div className="card">
@@ -3740,6 +3604,143 @@ export default function CircuitsScolairesPage() {
           </div>
         </div>
       )}
+
+      {/* CONTACTS URGENCE */}
+
+      <div
+        className="card"
+        style={{
+          marginTop: 14,
+        }}
+      >
+        <div className="card-head">
+          <div>
+            <div className="card-title">
+              Contacts d’urgence
+            </div>
+
+            <div className="card-subtitle">
+              Contacts importants par organisation.
+            </div>
+          </div>
+
+          <button
+            className="btn-primary"
+            type="button"
+            onClick={
+              ouvrirAjoutContact
+            }
+          >
+            + Ajouter un contact
+          </button>
+        </div>
+
+        <div className="table-wrap">
+          <table className="list">
+            <thead>
+              <tr>
+                <th>
+                  Organisation
+                </th>
+
+                <th>Nom</th>
+                <th>Fonction</th>
+                <th>Téléphone</th>
+                <th>Téléphone 2</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {contacts.map(
+                (contact) => (
+                  <tr
+                    className="row"
+                    key={contact.id}
+                    onDoubleClick={() =>
+                      ouvrirModificationContact(
+                        contact
+                      )
+                    }
+                    title="Double-clic pour modifier"
+                  >
+                    <td>
+                      {nomOrganisation(
+                        contact
+                      )}
+                    </td>
+
+                    <td>
+                      <strong>
+                        {contact.nom}
+                      </strong>
+                    </td>
+
+                    <td>
+                      {contact.fonction ||
+                        "—"}
+                    </td>
+
+                    <td>
+                      {contact.telephone ? (
+                        <a
+                          href={telHref(
+                            contact.telephone
+                          )}
+                          onDoubleClick={(
+                            e
+                          ) =>
+                            e.stopPropagation()
+                          }
+                        >
+                          {
+                            contact.telephone
+                          }
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+
+                    <td>
+                      {contact.telephone2 ? (
+                        <a
+                          href={telHref(
+                            contact.telephone2
+                          )}
+                          onDoubleClick={(
+                            e
+                          ) =>
+                            e.stopPropagation()
+                          }
+                        >
+                          {
+                            contact.telephone2
+                          }
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                )
+              )}
+
+              {contacts.length ===
+                0 && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="muted"
+                  >
+                    Aucun contact d’urgence.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
 
       {/* MODAL CIRCUIT */}
 

@@ -10,6 +10,7 @@ import {
 
 import CircuitsScolairesPage from "./pages/CircuitsScolairesPage";
 import CarteUnitesPage from "./pages/CarteUnitesPage";
+import ContactsPage from "./pages/ContactsPage";
 
 import DispatchCircuits from "./pages/DispatchCircuits";
 import DispatchCircuitDetail from "./pages/DispatchCircuitDetail";
@@ -217,6 +218,13 @@ function AppShell() {
           </NavLink>
 
           <NavLink
+            to="/admin/contacts"
+            className={linkClass}
+          >
+            Contacts
+          </NavLink>
+
+          <NavLink
             to="/admin/circuit-tablette-gps"
             className={linkClass}
           >
@@ -268,6 +276,11 @@ function AppShell() {
           <Route
             path="circuits-scolaires"
             element={<CircuitsScolairesPage />}
+          />
+
+          <Route
+            path="contacts"
+            element={<ContactsPage />}
           />
 
           <Route
