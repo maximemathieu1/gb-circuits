@@ -23,6 +23,7 @@ type Circuit = {
   numeroBus: string;
   conducteur: string;
   telephone: string;
+  verifie: boolean;
   notes?: string;
   documents?: CircuitDocument[];
 };
@@ -39,6 +40,7 @@ const circuitVide: CircuitForm = {
   numeroBus: "",
   conducteur: "",
   telephone: "",
+  verifie: false,
   notes: "",
   documents: [],
 };
@@ -51,6 +53,7 @@ const circuitsInitiaux: Circuit[] = [
     numeroBus: "508",
     conducteur: "Martin Gagnon",
     telephone: "418-555-1234",
+    verifie: false,
     documents: [],
   },
 ];
@@ -147,6 +150,7 @@ export default function CircuitsScolairePage() {
       numeroBus: circuit.numeroBus,
       conducteur: circuit.conducteur,
       telephone: circuit.telephone,
+      verifie: circuit.verifie,
       notes: circuit.notes || "",
       documents: circuit.documents || [],
     });
@@ -260,6 +264,7 @@ export default function CircuitsScolairePage() {
       numeroBus: form.numeroBus.trim(),
       conducteur: form.conducteur.trim(),
       telephone: form.telephone.trim(),
+      verifie: form.verifie,
       notes: form.notes?.trim() || "",
       documents: form.documents,
     };
@@ -349,6 +354,7 @@ export default function CircuitsScolairePage() {
                 <th>Bus</th>
                 <th>Conducteur</th>
                 <th>Téléphone</th>
+                <th style={{ textAlign: "center" }}>Vérifié</th>
                 <th>Documents</th>
               </tr>
             </thead>
@@ -378,6 +384,22 @@ export default function CircuitsScolairePage() {
                       <span className="muted">—</span>
                     )}
                   </td>
+                  <td style={{ textAlign: "center" }}>
+                    <span
+                      title={circuit.verifie ? "Circuit vérifié" : "À vérifier"}
+                      aria-label={circuit.verifie ? "Circuit vérifié" : "À vérifier"}
+                      style={{
+                        display: "inline-block",
+                        width: 12,
+                        height: 12,
+                        borderRadius: "50%",
+                        background: circuit.verifie ? "#16a34a" : "#f59e0b",
+                        boxShadow: circuit.verifie
+                          ? "0 0 0 3px rgba(22,163,74,.14)"
+                          : "0 0 0 3px rgba(245,158,11,.14)",
+                      }}
+                    />
+                  </td>
                   <td>
                     {circuit.documents?.length ? (
                       `${circuit.documents.length} document(s)`
@@ -390,7 +412,7 @@ export default function CircuitsScolairePage() {
 
               {circuitsFiltres.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="muted">
+                  <td colSpan={7} className="muted">
                     Aucun circuit trouvé.
                   </td>
                 </tr>
