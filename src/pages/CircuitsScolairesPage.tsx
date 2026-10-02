@@ -1869,15 +1869,24 @@ export default function CircuitsScolairesPage() {
       // la plus élevée.
       const seuilRecurrence = 0.35;
       const dureesRecurrentes = [...compteur.entries()]
-        .filter(([, count]) => count >= 3 && count / durees.length >= seuilRecurrence)
+        .filter(([, count]) => count / durees.length >= seuilRecurrence)
         .map(([duree]) => duree)
         .sort((a, b) => b - a);
 
       let nombreHeures: number | null = dureesRecurrentes[0] ?? null;
 
       if (nombreHeures == null && durees.length > 0) {
-        const triees = [...durees].sort((a, b) => a - b);
-        nombreHeures = triees[Math.floor((triees.length - 1) / 2)];
+        // Si aucune durée n'atteint le seuil de récurrence de 35 %,
+        // on prend la durée la plus fréquente.
+        // En cas d'égalité, on retient volontairement la PLUS ÉLEVÉE afin de
+        // ne pas sous-estimer les heures du circuit.
+        const maxOccurrences = Math.max(...compteur.values());
+        const dureesLesPlusFrequentes = [...compteur.entries()]
+          .filter(([, count]) => count === maxOccurrences)
+          .map(([duree]) => duree)
+          .sort((a, b) => b - a);
+
+        nombreHeures = dureesLesPlusFrequentes[0] ?? null;
       }
 
       const kmValues = reguliers
@@ -4336,7 +4345,7 @@ export default function CircuitsScolairesPage() {
               </div>
 
               <div className="muted" style={{ fontSize: 12 }}>
-                Nombre d’heures : les durées sont arrondies au 0,25 h. Une durée plus élevée est retenue comme récurrente lorsqu’elle apparaît au moins 3 fois et dans au moins 35 % des journées régulières retenues. Si un nouveau régime d’heures ou de KM devient récurrent dans les journées les plus récentes, l’ancien historique est écarté.
+                Nombre d’heures : les durées sont arrondies au 0,25 h. Une durée plus élevée est retenue comme récurrente lorsqu’elle apparaît dans au moins 35 % des journées régulières retenues. Si un nouveau régime d’heures ou de KM devient récurrent dans les journées les plus récentes, l’ancien historique est écarté.
               </div>
 
               <div
