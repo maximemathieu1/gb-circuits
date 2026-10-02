@@ -1525,6 +1525,10 @@ export default function CircuitsScolairesPage() {
     setModalCircuitOuvert(true);
     void chargerAnalyseSamsara(circuit.id, mondayIso(0));
     void chargerAttentesSamsara(circuit.id);
+
+    // Complète automatiquement le profil depuis les journées régulières.
+    // Les valeurs déjà enregistrées/manuellement corrigées ne sont pas écrasées.
+    void analyserProfilCircuit(circuit.id, true);
   }
 
   function fermerModalCircuit() {
@@ -1628,8 +1632,12 @@ export default function CircuitsScolairesPage() {
   }
 
 
-  async function analyserProfilCircuit() {
-    if (!circuitActifId || analyseProfilEnCours) return;
+  async function analyserProfilCircuit(
+    circuitIdForce?: string,
+    remplirSeulementVides = false
+  ) {
+    const circuitIdAnalyse = circuitIdForce ?? circuitActifId;
+    if (!circuitIdAnalyse || analyseProfilEnCours) return;
 
     try {
       setAnalyseProfilEnCours(true);
@@ -1637,7 +1645,7 @@ export default function CircuitsScolairesPage() {
       const { data, error } = await circuitSupabase
         .from("circuit_samsara_jours")
         .select("*")
-        .eq("circuit_id", circuitActifId)
+        .eq("circuit_id", circuitIdAnalyse)
         .eq("exclue", false)
         .order("date", { ascending: false })
         .limit(60);
@@ -1787,16 +1795,34 @@ export default function CircuitsScolairesPage() {
 
       setCircuitForm((prev) => {
         const vad = Number.isFinite(prev.vad) ? prev.vad : 0.25;
+
+        // À l'ouverture de la fiche, on complète automatiquement seulement
+        // les champs encore vides afin de ne jamais écraser une correction manuelle.
+        const nouveauKmCircuit =
+          remplirSeulementVides && prev.kmCircuit != null ? prev.kmCircuit : kmCircuit;
+        const nouveauNombreHeures =
+          remplirSeulementVides && prev.nombreHeures != null ? prev.nombreHeures : nombreHeures;
+        const nouveauDepartAm =
+          remplirSeulementVides && prev.departAmPlanifie ? prev.departAmPlanifie : departAmPlanifie;
+        const nouvelleArriveeAm =
+          remplirSeulementVides && prev.arriveeAmPlanifie ? prev.arriveeAmPlanifie : arriveeAmPlanifie;
+        const nouveauDepartPm =
+          remplirSeulementVides && prev.departPmPlanifie ? prev.departPmPlanifie : departPmPlanifie;
+        const nouvelleArriveePm =
+          remplirSeulementVides && prev.arriveePmPlanifie ? prev.arriveePmPlanifie : arriveePmPlanifie;
+
         return {
           ...prev,
-          kmCircuit,
-          nombreHeures,
-          departAmPlanifie,
-          arriveeAmPlanifie,
-          departPmPlanifie,
-          arriveePmPlanifie,
+          kmCircuit: nouveauKmCircuit,
+          nombreHeures: nouveauNombreHeures,
+          departAmPlanifie: nouveauDepartAm,
+          arriveeAmPlanifie: nouvelleArriveeAm,
+          departPmPlanifie: nouveauDepartPm,
+          arriveePmPlanifie: nouvelleArriveePm,
           heuresTotalPaye:
-            nombreHeures == null ? null : Number((nombreHeures + vad).toFixed(2)),
+            nouveauNombreHeures == null
+              ? null
+              : Number((nouveauNombreHeures + vad).toFixed(2)),
         };
       });
     } catch (error: any) {
