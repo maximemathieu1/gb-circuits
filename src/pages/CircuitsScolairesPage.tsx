@@ -268,6 +268,17 @@ function calculNombreHeuresPlanifie(
 
 function heureChampDepuisIso(value: string | null) {
   if (!value) return "";
+
+  // Supporte autant un timestamp ISO Samsara qu'une valeur TIME PostgreSQL
+  // (ex. 07:12:00). Le navigateur n'interprète pas toujours "07:12:00"
+  // comme une Date valide, ce qui laissait les champs AM/PM vides.
+  const heureSeule = value.match(/^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/);
+  if (heureSeule) {
+    const h = Math.max(0, Math.min(23, Number(heureSeule[1])));
+    const m = Math.max(0, Math.min(59, Number(heureSeule[2])));
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  }
+
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "";
   const parts = new Intl.DateTimeFormat("fr-CA", {
@@ -1677,10 +1688,16 @@ export default function CircuitsScolairesPage() {
 
       let reguliers = jours
         .filter(jourSamsaraCompletPourMoyenne)
-        .filter((jour) =>
-          jour.statutManuel === "regulier" ||
-          (jour.statutManuel == null && jour.statut === "Régulier")
-        )
+        .filter((jour) => {
+          // Un statut manuel Hors régulier exclut toujours la journée.
+          if (jour.statutManuel === "hors_regulier") return false;
+          if (jour.statutManuel === "regulier") return true;
+
+          // Pour l'automatique, on accepte soit le libellé Régulier,
+          // soit une journée à laquelle l'analyse a attribué des KM réguliers.
+          // Cela évite de dépendre d'un accent/format exact dans `statut`.
+          return jour.statut === "Régulier" || jour.kmRegulier > 0;
+        })
         .sort((a, b) => a.date.localeCompare(b.date))
         .slice(-20);
 
@@ -1792,6 +1809,17 @@ export default function CircuitsScolairesPage() {
       const arriveePmPlanifie = moyenneHeuresChamp(
         reguliers.map((jour) => heureChampDepuisIso(jour.retourPm)).filter(Boolean)
       );
+
+      if (!departAmPlanifie || !arriveeAmPlanifie || !departPmPlanifie || !arriveePmPlanifie) {
+        console.warn("Profil circuit : heures AM/PM incomplètes après analyse", {
+          circuitId: circuitIdAnalyse,
+          joursReguliers: reguliers.length,
+          departAmPlanifie,
+          arriveeAmPlanifie,
+          departPmPlanifie,
+          arriveePmPlanifie,
+        });
+      }
 
       setCircuitForm((prev) => {
         const vad = Number.isFinite(prev.vad) ? prev.vad : 0.25;
