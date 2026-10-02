@@ -52,6 +52,14 @@ type CircuitScolaire = {
   telephone: string;
   localisation: string;
   compagnie: Compagnie;
+  kmCircuit: number | null;
+  nombreHeures: number | null;
+  departAmPlanifie: string;
+  arriveeAmPlanifie: string;
+  departPmPlanifie: string;
+  arriveePmPlanifie: string;
+  vad: number;
+  heuresTotalPaye: number | null;
   documents: CircuitDocument[];
 };
 
@@ -143,6 +151,14 @@ const circuitVide: Omit<CircuitScolaire, "id"> = {
   telephone: "",
   localisation: "",
   compagnie: "Autobus Breton",
+  kmCircuit: null,
+  nombreHeures: null,
+  departAmPlanifie: "",
+  arriveeAmPlanifie: "",
+  departPmPlanifie: "",
+  arriveePmPlanifie: "",
+  vad: 0.25,
+  heuresTotalPaye: null,
   documents: [],
 };
 
@@ -217,6 +233,67 @@ function minutesEntreHeures(depart: string | null, retour: string | null): numbe
 
 function arrondirQuartHeureDecimal(heures: number) {
   return Math.round(heures * 4) / 4;
+}
+
+function minutesDepuisHeureChamp(value: string) {
+  const match = /^(\\d{1,2}):(\\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const heures = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(heures) || !Number.isFinite(minutes) || heures < 0 || heures > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return heures * 60 + minutes;
+}
+
+function calculNombreHeuresPlanifie(
+  departAm: string,
+  arriveeAm: string,
+  departPm: string,
+  arriveePm: string
+) {
+  const dAm = minutesDepuisHeureChamp(departAm);
+  const aAm = minutesDepuisHeureChamp(arriveeAm);
+  const dPm = minutesDepuisHeureChamp(departPm);
+  const aPm = minutesDepuisHeureChamp(arriveePm);
+
+  if (dAm == null || aAm == null || dPm == null || aPm == null) return null;
+
+  const minutesAm = aAm - dAm;
+  const minutesPm = aPm - dPm;
+  if (minutesAm < 0 || minutesPm < 0) return null;
+
+  return arrondirQuartHeureDecimal((minutesAm + minutesPm) / 60);
+}
+
+function heureChampDepuisIso(value: string | null) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("fr-CA", {
+    timeZone: "America/Toronto",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const heure = parts.find((part) => part.type === "hour")?.value ?? "";
+  const minute = parts.find((part) => part.type === "minute")?.value ?? "";
+  return heure && minute ? `${heure}:${minute}` : "";
+}
+
+function moyenneHeuresChamp(values: string[]) {
+  const minutes = values
+    .map(minutesDepuisHeureChamp)
+    .filter((value): value is number => value != null);
+
+  if (minutes.length === 0) return "";
+
+  const moyenne = Math.round(
+    minutes.reduce((sum, value) => sum + value, 0) / minutes.length
+  );
+  const h = Math.floor(moyenne / 60) % 24;
+  const m = moyenne % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 function calculHeuresJour(jour: CircuitSamsaraJour) {
@@ -529,6 +606,8 @@ export default function CircuitsScolairesPage() {
   useState<CircuitSamsaraConfig | null>(null);
   const [samsaraChargement, setSamsaraChargement] = useState(false);
   const [samsaraSync, setSamsaraSync] = useState(false);
+  const [analyseProfilEnCours, setAnalyseProfilEnCours] = useState(false);
+  const [vadEdition, setVadEdition] = useState(false);
   const [afficherExclues, setAfficherExclues] = useState(false);
   const [samsaraSemaine, setSamsaraSemaine] = useState(mondayIso(0));
 
@@ -572,6 +651,14 @@ export default function CircuitsScolairesPage() {
           telephone,
           localisation,
           compagnie,
+          km_circuit,
+          nombre_heures,
+          depart_am_planifie,
+          arrivee_am_planifie,
+          depart_pm_planifie,
+          arrivee_pm_planifie,
+          vad,
+          heures_total_paye,
           circuits_scolaires_documents (
             id,
             circuit_id,
@@ -603,6 +690,14 @@ export default function CircuitsScolairesPage() {
           item.localisation || "",
         compagnie:
           item.compagnie as Compagnie,
+        kmCircuit: item.km_circuit == null ? null : Number(item.km_circuit),
+        nombreHeures: item.nombre_heures == null ? null : Number(item.nombre_heures),
+        departAmPlanifie: item.depart_am_planifie || "",
+        arriveeAmPlanifie: item.arrivee_am_planifie || "",
+        departPmPlanifie: item.depart_pm_planifie || "",
+        arriveePmPlanifie: item.arrivee_pm_planifie || "",
+        vad: item.vad == null ? 0.25 : Number(item.vad),
+        heuresTotalPaye: item.heures_total_paye == null ? null : Number(item.heures_total_paye),
 
         documents:
           (
@@ -1410,9 +1505,19 @@ export default function CircuitsScolairesPage() {
       compagnie:
         circuit.compagnie,
 
+      kmCircuit: circuit.kmCircuit,
+      nombreHeures: circuit.nombreHeures,
+      departAmPlanifie: circuit.departAmPlanifie,
+      arriveeAmPlanifie: circuit.arriveeAmPlanifie,
+      departPmPlanifie: circuit.departPmPlanifie,
+      arriveePmPlanifie: circuit.arriveePmPlanifie,
+      vad: circuit.vad ?? 0.25,
+      heuresTotalPaye: circuit.heuresTotalPaye,
+
       documents:
         circuit.documents || [],
     });
+    setVadEdition(false);
 
     setFichiersEnAttente([]);
     setOngletCircuit("infos");
@@ -1439,6 +1544,7 @@ export default function CircuitsScolairesPage() {
     setSamsaraJours([]);
     setSamsaraAttentes([]);
     setSamsaraConfig(null);
+    setVadEdition(false);
   }
 
   async function chargerAnalyseSamsara(
@@ -1518,6 +1624,186 @@ export default function CircuitsScolairesPage() {
       alert(error?.message || "Impossible de charger l’analyse Samsara.");
     } finally {
       setSamsaraChargement(false);
+    }
+  }
+
+
+  async function analyserProfilCircuit() {
+    if (!circuitActifId || analyseProfilEnCours) return;
+
+    try {
+      setAnalyseProfilEnCours(true);
+
+      const { data, error } = await circuitSupabase
+        .from("circuit_samsara_jours")
+        .select("*")
+        .eq("circuit_id", circuitActifId)
+        .eq("exclue", false)
+        .order("date", { ascending: false })
+        .limit(60);
+
+      if (error) throw error;
+
+      const jours: CircuitSamsaraJour[] = (data ?? []).map((row: any) => ({
+        id: row.id,
+        circuitId: row.circuit_id,
+        date: row.date,
+        samsaraVehicleId: row.samsara_vehicle_id || "",
+        samsaraVehicleName: row.samsara_vehicle_name || "",
+        departAm: row.depart_am,
+        retourAm: row.retour_am,
+        kmAm: Number(row.km_am ?? 0),
+        departPm: row.depart_pm,
+        retourPm: row.retour_pm,
+        kmPm: Number(row.km_pm ?? 0),
+        kmRegulier: Number(row.km_regulier ?? 0),
+        kmHorsRegulier: Number(row.km_hors_regulier ?? 0),
+        statut: row.statut || "—",
+        statutManuel:
+          row.statut_manuel === "regulier" || row.statut_manuel === "hors_regulier"
+            ? row.statut_manuel
+            : null,
+        details: row.details && typeof row.details === "object" ? row.details : {},
+        exclue: !!row.exclue,
+      }));
+
+      let reguliers = jours
+        .filter(jourSamsaraCompletPourMoyenne)
+        .filter((jour) =>
+          jour.statutManuel === "regulier" ||
+          (jour.statutManuel == null && jour.statut === "Régulier")
+        )
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .slice(-20);
+
+      if (reguliers.length === 0) {
+        alert("Aucune journée régulière complète n’est disponible pour établir le profil du circuit.");
+        return;
+      }
+
+      // Si les dernières journées montrent un nouveau régime récurrent,
+      // on ignore l'ancien historique. Un régime récent doit apparaître
+      // au moins 3 fois parmi les 5 dernières journées.
+      if (reguliers.length > 5) {
+        const recentes = reguliers.slice(-5);
+        const anciennes = reguliers.slice(0, -5);
+
+        const heuresRecentes = recentes
+          .map((jour) => calculHeuresJour(jour).heuresRegulieres)
+          .filter((value): value is number => value != null);
+
+        const compteurHeures = new Map<number, number>();
+        for (const value of heuresRecentes) {
+          compteurHeures.set(value, (compteurHeures.get(value) ?? 0) + 1);
+        }
+        const modeRecentHeures = [...compteurHeures.entries()]
+          .sort((a, b) => b[1] - a[1] || b[0] - a[0])[0];
+
+        const heuresAnciennes = anciennes
+          .map((jour) => calculHeuresJour(jour).heuresRegulieres)
+          .filter((value): value is number => value != null);
+        const compteurAncienHeures = new Map<number, number>();
+        for (const value of heuresAnciennes) {
+          compteurAncienHeures.set(value, (compteurAncienHeures.get(value) ?? 0) + 1);
+        }
+        const modeAncienHeures = [...compteurAncienHeures.entries()]
+          .sort((a, b) => b[1] - a[1] || b[0] - a[0])[0];
+
+        const kmRecents = recentes.map((jour) => jour.kmRegulier).filter((value) => value > 0);
+        const kmAnciens = anciennes.map((jour) => jour.kmRegulier).filter((value) => value > 0);
+        const moyenne = (values: number[]) =>
+          values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+        const kmRecentMoyen = moyenne(kmRecents);
+        const kmAncienMoyen = moyenne(kmAnciens);
+        const toleranceKm = Math.max(3, kmRecentMoyen * 0.05);
+        const kmRecentStable =
+          kmRecents.filter((value) => Math.abs(value - kmRecentMoyen) <= toleranceKm).length >= 3;
+        const changementKm =
+          kmRecentStable &&
+          kmAncienMoyen > 0 &&
+          Math.abs(kmRecentMoyen - kmAncienMoyen) > toleranceKm;
+
+        const changementHeures =
+          !!modeRecentHeures &&
+          modeRecentHeures[1] >= 3 &&
+          !!modeAncienHeures &&
+          modeRecentHeures[0] !== modeAncienHeures[0];
+
+        if (changementHeures || changementKm) {
+          reguliers = recentes;
+        }
+      }
+
+      const durees = reguliers
+        .map((jour) => calculHeuresJour(jour).heuresRegulieres)
+        .filter((value): value is number => value != null);
+
+      const compteur = new Map<number, number>();
+      for (const duree of durees) {
+        compteur.set(duree, (compteur.get(duree) ?? 0) + 1);
+      }
+
+      // Règle convenue : une durée est reconnue comme récurrente si elle
+      // apparaît au moins 3 fois ET représente au moins 35 % des journées
+      // régulières retenues. Si plusieurs durées passent le seuil, on garde
+      // la plus élevée.
+      const seuilRecurrence = 0.35;
+      const dureesRecurrentes = [...compteur.entries()]
+        .filter(([, count]) => count >= 3 && count / durees.length >= seuilRecurrence)
+        .map(([duree]) => duree)
+        .sort((a, b) => b - a);
+
+      let nombreHeures: number | null = dureesRecurrentes[0] ?? null;
+
+      if (nombreHeures == null && durees.length > 0) {
+        const triees = [...durees].sort((a, b) => a - b);
+        nombreHeures = triees[Math.floor((triees.length - 1) / 2)];
+      }
+
+      const kmValues = reguliers
+        .map((jour) => jour.kmRegulier)
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const kmCircuit =
+        kmValues.length > 0
+          ? Number(
+              (
+                kmValues.reduce((sum, value) => sum + value, 0) / kmValues.length
+              ).toFixed(1)
+            )
+          : null;
+
+      const departAmPlanifie = moyenneHeuresChamp(
+        reguliers.map((jour) => heureChampDepuisIso(jour.departAm)).filter(Boolean)
+      );
+      const arriveeAmPlanifie = moyenneHeuresChamp(
+        reguliers.map((jour) => heureChampDepuisIso(jour.retourAm)).filter(Boolean)
+      );
+      const departPmPlanifie = moyenneHeuresChamp(
+        reguliers.map((jour) => heureChampDepuisIso(jour.departPm)).filter(Boolean)
+      );
+      const arriveePmPlanifie = moyenneHeuresChamp(
+        reguliers.map((jour) => heureChampDepuisIso(jour.retourPm)).filter(Boolean)
+      );
+
+      setCircuitForm((prev) => {
+        const vad = Number.isFinite(prev.vad) ? prev.vad : 0.25;
+        return {
+          ...prev,
+          kmCircuit,
+          nombreHeures,
+          departAmPlanifie,
+          arriveeAmPlanifie,
+          departPmPlanifie,
+          arriveePmPlanifie,
+          heuresTotalPaye:
+            nombreHeures == null ? null : Number((nombreHeures + vad).toFixed(2)),
+        };
+      });
+    } catch (error: any) {
+      console.error("Erreur analyse profil circuit", error);
+      alert(error?.message || "Impossible d’analyser le profil du circuit.");
+    } finally {
+      setAnalyseProfilEnCours(false);
     }
   }
 
@@ -1803,6 +2089,18 @@ export default function CircuitsScolairesPage() {
               compagnie:
                 circuitForm.compagnie,
 
+              km_circuit: circuitForm.kmCircuit,
+              nombre_heures: circuitForm.nombreHeures,
+              depart_am_planifie: circuitForm.departAmPlanifie || null,
+              arrivee_am_planifie: circuitForm.arriveeAmPlanifie || null,
+              depart_pm_planifie: circuitForm.departPmPlanifie || null,
+              arrivee_pm_planifie: circuitForm.arriveePmPlanifie || null,
+              vad: Number.isFinite(circuitForm.vad) ? circuitForm.vad : 0.25,
+              heures_total_paye:
+                circuitForm.nombreHeures == null
+                  ? null
+                  : Number((circuitForm.nombreHeures + (Number.isFinite(circuitForm.vad) ? circuitForm.vad : 0.25)).toFixed(2)),
+
               updated_at:
                 new Date().toISOString(),
             })
@@ -1838,6 +2136,17 @@ export default function CircuitsScolairesPage() {
 
               compagnie:
                 circuitForm.compagnie,
+              km_circuit: circuitForm.kmCircuit,
+              nombre_heures: circuitForm.nombreHeures,
+              depart_am_planifie: circuitForm.departAmPlanifie || null,
+              arrivee_am_planifie: circuitForm.arriveeAmPlanifie || null,
+              depart_pm_planifie: circuitForm.departPmPlanifie || null,
+              arrivee_pm_planifie: circuitForm.arriveePmPlanifie || null,
+              vad: Number.isFinite(circuitForm.vad) ? circuitForm.vad : 0.25,
+              heures_total_paye:
+                circuitForm.nombreHeures == null
+                  ? null
+                  : Number((circuitForm.nombreHeures + (Number.isFinite(circuitForm.vad) ? circuitForm.vad : 0.25)).toFixed(2)),
             })
             .select("id")
             .single();
@@ -3637,6 +3946,190 @@ export default function CircuitsScolairesPage() {
                     )
                   }
                 />
+              </div>
+            </div>
+
+
+            <div
+              style={{
+                marginTop: 18,
+                paddingTop: 16,
+                borderTop: "1px solid #e5e7eb",
+                display: "grid",
+                gap: 12,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 900, fontSize: 16 }}>
+                    Profil régulier du circuit
+                  </div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>
+                    Alimenté par les journées régulières de Heures/KM. Les valeurs restent modifiables manuellement.
+                  </div>
+                </div>
+
+                <button
+                  className="btn-primary"
+                  type="button"
+                  disabled={!circuitActifId || analyseProfilEnCours}
+                  onClick={() => void analyserProfilCircuit()}
+                  title={!circuitActifId ? "Enregistre d’abord le circuit" : "Analyser les journées régulières récentes"}
+                >
+                  {analyseProfilEnCours ? "Analyse…" : "Analyser"}
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+                  gap: 10,
+                }}
+              >
+                <div className="field">
+                  <div className="label">KM circuit</div>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    value={circuitForm.kmCircuit ?? ""}
+                    onChange={(e) =>
+                      setCircuitForm((prev) => ({
+                        ...prev,
+                        kmCircuit: e.target.value === "" ? null : Number(e.target.value),
+                      }))
+                    }
+                  />
+                </div>
+
+                <div className="field">
+                  <div className="label">Nombre d’heures</div>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    step={0.25}
+                    value={circuitForm.nombreHeures ?? ""}
+                    onChange={(e) => {
+                      const nombreHeures = e.target.value === "" ? null : Number(e.target.value);
+                      setCircuitForm((prev) => ({
+                        ...prev,
+                        nombreHeures,
+                        heuresTotalPaye:
+                          nombreHeures == null
+                            ? null
+                            : Number((nombreHeures + (Number.isFinite(prev.vad) ? prev.vad : 0.25)).toFixed(2)),
+                      }));
+                    }}
+                  />
+                </div>
+
+                <div className="field">
+                  <div className="label">VAD</div>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    step={0.25}
+                    value={circuitForm.vad}
+                    readOnly={!vadEdition}
+                    onDoubleClick={() => setVadEdition(true)}
+                    onFocus={() => {
+                      if (!vadEdition) return;
+                    }}
+                    onBlur={() => setVadEdition(false)}
+                    onChange={(e) => {
+                      if (!vadEdition) return;
+                      const vad = e.target.value === "" ? 0 : Number(e.target.value);
+                      setCircuitForm((prev) => ({
+                        ...prev,
+                        vad,
+                        heuresTotalPaye:
+                          prev.nombreHeures == null
+                            ? null
+                            : Number((prev.nombreHeures + vad).toFixed(2)),
+                      }));
+                    }}
+                    title={vadEdition ? "Modification du VAD activée" : "Double-clique pour modifier le VAD"}
+                    style={!vadEdition ? { background: "#f8fafc", cursor: "default" } : undefined}
+                  />
+                  <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                    Par défaut 0,25 h · double-clic pour modifier
+                  </div>
+                </div>
+
+                <div className="field">
+                  <div className="label">Heures totales payées</div>
+                  <input
+                    className="input"
+                    value={
+                      circuitForm.nombreHeures == null
+                        ? ""
+                        : (circuitForm.nombreHeures + (Number.isFinite(circuitForm.vad) ? circuitForm.vad : 0.25)).toFixed(2)
+                    }
+                    readOnly
+                    style={{ background: "#f8fafc", fontWeight: 900 }}
+                  />
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+                  gap: 10,
+                }}
+              >
+                {[
+                  ["AM · Heure de départ", "departAmPlanifie"],
+                  ["AM · Heure d’arrivée", "arriveeAmPlanifie"],
+                  ["PM · Heure de départ", "departPmPlanifie"],
+                  ["PM · Heure d’arrivée", "arriveePmPlanifie"],
+                ].map(([label, key]) => (
+                  <div className="field" key={key}>
+                    <div className="label">{label}</div>
+                    <input
+                      className="input"
+                      type="time"
+                      value={String(circuitForm[key as "departAmPlanifie" | "arriveeAmPlanifie" | "departPmPlanifie" | "arriveePmPlanifie"] ?? "")}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setCircuitForm((prev) => {
+                          const next = { ...prev, [key]: value };
+                          const nombreHeuresCalcule = calculNombreHeuresPlanifie(
+                            String(next.departAmPlanifie),
+                            String(next.arriveeAmPlanifie),
+                            String(next.departPmPlanifie),
+                            String(next.arriveePmPlanifie)
+                          );
+                          return {
+                            ...next,
+                            nombreHeures:
+                              nombreHeuresCalcule == null ? prev.nombreHeures : nombreHeuresCalcule,
+                            heuresTotalPaye:
+                              nombreHeuresCalcule == null
+                                ? prev.heuresTotalPaye
+                                : Number((nombreHeuresCalcule + (Number.isFinite(prev.vad) ? prev.vad : 0.25)).toFixed(2)),
+                          };
+                        });
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="muted" style={{ fontSize: 12 }}>
+                Nombre d’heures : les durées sont arrondies au 0,25 h. Une durée plus élevée est retenue comme récurrente lorsqu’elle apparaît au moins 3 fois et dans au moins 35 % des journées régulières retenues. Si un nouveau régime d’heures ou de KM devient récurrent dans les journées les plus récentes, l’ancien historique est écarté.
               </div>
             </div>
 
