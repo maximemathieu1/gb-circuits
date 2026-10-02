@@ -1703,7 +1703,18 @@ export default function CircuitsScolairesPage() {
         alert("Le profil doit être complet avant de pouvoir être accepté pour RH.");
         return;
       }
+
+      if (!circuitForm.conducteurContactId || !circuitForm.nomConducteur.trim()) {
+        alert("Un conducteur doit être assigné au circuit avant l’acceptation RH.");
+        return;
+      }
     }
+
+    const ancienEtat = {
+      accepte: circuitForm.profilRhAccepte,
+      accepteLe: circuitForm.profilRhAccepteLe,
+      acceptePar: circuitForm.profilRhAcceptePar,
+    };
 
     try {
       setOperationEnCours(true);
@@ -1719,6 +1730,7 @@ export default function CircuitsScolairesPage() {
       }
 
       const accepteLe = accepte ? new Date().toISOString() : null;
+      const updatedAt = new Date().toISOString();
 
       const { error } = await circuitSupabase
         .from("circuits_scolaires")
@@ -1726,11 +1738,40 @@ export default function CircuitsScolairesPage() {
           profil_rh_accepte: accepte,
           profil_rh_accepte_le: accepteLe,
           profil_rh_accepte_par: accepte ? acceptePar || null : null,
-          updated_at: new Date().toISOString(),
+          updated_at: updatedAt,
         })
         .eq("id", circuitActifId);
 
       if (error) throw error;
+
+      // Synchronisation inter-projets : Circuits -> RH.
+      // On ne montre l'état accepté dans l'interface qu'après confirmation de RH.
+      const { data: syncData, error: syncError } =
+        await circuitSupabase.functions.invoke("sync-circuit-rh", {
+          body: { circuit_id: circuitActifId },
+        });
+
+      if (syncError || syncData?.success === false) {
+        // Rollback de l'acceptation locale pour éviter un circuit vert
+        // qui n'aurait pas réellement été reçu par RH.
+        await circuitSupabase
+          .from("circuits_scolaires")
+          .update({
+            profil_rh_accepte: ancienEtat.accepte,
+            profil_rh_accepte_le: ancienEtat.accepteLe,
+            profil_rh_accepte_par: ancienEtat.accepte
+              ? ancienEtat.acceptePar || null
+              : null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", circuitActifId);
+
+        throw new Error(
+          syncData?.error ||
+            syncError?.message ||
+            "Le profil n'a pas pu être synchronisé avec RH."
+        );
+      }
 
       setCircuitForm((prev) => ({
         ...prev,
@@ -1756,8 +1797,11 @@ export default function CircuitsScolairesPage() {
         setVadEdition(false);
       }
     } catch (error: any) {
-      console.error("Erreur acceptation profil RH", error);
-      alert(error?.message || "Impossible de modifier l’état d’acceptation du profil.");
+      console.error("Erreur acceptation / synchronisation profil RH", error);
+      alert(
+        error?.message ||
+          "Impossible de modifier l’état d’acceptation ou de synchroniser le profil avec RH."
+      );
     } finally {
       setOperationEnCours(false);
     }
