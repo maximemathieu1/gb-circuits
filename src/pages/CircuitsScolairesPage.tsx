@@ -3143,6 +3143,31 @@ export default function CircuitsScolairesPage() {
                         className="muted"
                         style={{ fontSize: 11 }}
                       >
+                        Vérifié
+                      </div>
+                      <div style={{ fontWeight: 700 }}>
+                        <span
+                          title={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
+                          aria-label={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
+                          style={{
+                            display: "inline-block",
+                            width: 12,
+                            height: 12,
+                            borderRadius: "50%",
+                            background: item.profilRhAccepte ? "#16a34a" : "#f59e0b",
+                            boxShadow: item.profilRhAccepte
+                              ? "0 0 0 3px rgba(22,163,74,.14)"
+                              : "0 0 0 3px rgba(245,158,11,.14)",
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div
+                        className="muted"
+                        style={{ fontSize: 11 }}
+                      >
                         Documents
                       </div>
                       <div style={{ fontWeight: 700 }}>
@@ -3257,6 +3282,10 @@ export default function CircuitsScolairesPage() {
                   {indicateurTri(
                     "compagnie"
                   )}
+                </th>
+
+                <th style={{ textAlign: "center" }}>
+                  Vérifié
                 </th>
 
                 <th>
@@ -3386,6 +3415,23 @@ export default function CircuitsScolairesPage() {
                       {item.compagnie}
                     </td>
 
+                    <td style={{ textAlign: "center" }}>
+                      <span
+                        title={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
+                        aria-label={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
+                        style={{
+                          display: "inline-block",
+                          width: 12,
+                          height: 12,
+                          borderRadius: "50%",
+                          background: item.profilRhAccepte ? "#16a34a" : "#f59e0b",
+                          boxShadow: item.profilRhAccepte
+                            ? "0 0 0 3px rgba(22,163,74,.14)"
+                            : "0 0 0 3px rgba(245,158,11,.14)",
+                        }}
+                      />
+                    </td>
+
                     <td>
                       {item.documents
                         .length > 0
@@ -3400,7 +3446,7 @@ export default function CircuitsScolairesPage() {
                 0 && (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     className="muted"
                   >
                     Aucun circuit.
