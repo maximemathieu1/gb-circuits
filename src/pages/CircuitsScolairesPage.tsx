@@ -358,6 +358,21 @@ function jourSamsaraAvecDonnees(jour: CircuitSamsaraJour) {
   );
 }
 
+function kmRegulierEffectif(jour: CircuitSamsaraJour) {
+  const totalKm = Math.max(0, jour.kmAm) + Math.max(0, jour.kmPm);
+
+  // Si la journée est confirmée régulière manuellement OU automatiquement,
+  // tout le kilométrage AM + PM doit compter comme régulier.
+  if (
+    jour.statutManuel === "regulier" ||
+    (jour.statutManuel == null && jour.statut === "Régulier")
+  ) {
+    return totalKm;
+  }
+
+  return Math.max(0, jour.kmRegulier);
+}
+
 function jourSamsaraCompletPourMoyenne(jour: CircuitSamsaraJour) {
   const amComplet = Boolean(jour.departAm && jour.retourAm);
   const pmComplet = Boolean(jour.departPm && jour.retourPm);
@@ -2076,6 +2091,13 @@ export default function CircuitsScolairesPage() {
     let kmRegulier = Number(details.auto_km_regulier ?? jour.kmRegulier ?? 0);
     let kmHorsRegulier = Number(details.auto_km_hors_regulier ?? jour.kmHorsRegulier ?? 0);
 
+    if (valeur === "auto" && statut === "Régulier") {
+      // Une journée automatiquement régulière doit toujours compter
+      // l'ensemble du trajet AM + PM comme KM régulier.
+      kmRegulier = totalKm;
+      kmHorsRegulier = 0;
+    }
+
     if (valeur === "regulier") {
       statutManuel = "regulier";
       statut = "Régulier";
@@ -2141,10 +2163,10 @@ export default function CircuitsScolairesPage() {
   const samsaraResume = {
     kmMoyen:
       samsaraJoursComplets.length > 0
-        ? samsaraJoursComplets.reduce((sum, row) => sum + row.kmRegulier, 0) /
+        ? samsaraJoursComplets.reduce((sum, row) => sum + kmRegulierEffectif(row), 0) /
           samsaraJoursComplets.length
         : 0,
-    kmTotal: samsaraJoursComplets.reduce((sum, row) => sum + row.kmRegulier, 0),
+    kmTotal: samsaraJoursComplets.reduce((sum, row) => sum + kmRegulierEffectif(row), 0),
     horsTotal: samsaraJoursAvecDonnees.reduce((sum, row) => sum + row.kmHorsRegulier, 0),
     heuresMoyennes:
       heuresPayablesIncluses.length > 0
@@ -4688,7 +4710,7 @@ export default function CircuitsScolairesPage() {
                         >
                           PM
                         </th>
-                        <th rowSpan={2} style={{ verticalAlign: "middle", borderLeft: "1px solid #cbd5e1", paddingLeft: 14 }}>KM régulier</th>
+                        <th rowSpan={2} style={{ verticalAlign: "middle", borderLeft: "1px solid #cbd5e1", paddingLeft: 14 }}>KM total</th>
                                                 <th rowSpan={2} style={{ verticalAlign: "middle" }}>H régulières</th>
                         <th rowSpan={2} style={{ verticalAlign: "middle" }}>VAD</th>
                         <th rowSpan={2} style={{ verticalAlign: "middle" }}>H à payer</th>
@@ -4722,7 +4744,9 @@ export default function CircuitsScolairesPage() {
                             <td style={{ borderLeft: "1px solid #e2e8f0", paddingLeft: 12 }}>{formatHeureSamsara(jour.departPm)}</td>
                             <td>{formatHeureSamsara(jour.retourPm)}</td>
                             <td>{jour.kmPm.toFixed(1)}</td>
-                            <td style={{ borderLeft: "1px solid #e2e8f0", paddingLeft: 14 }}><strong>{jour.kmRegulier.toFixed(1)}</strong></td>
+                            <td style={{ borderLeft: "1px solid #e2e8f0", paddingLeft: 14 }}>
+                              <strong>{(Math.max(0, jour.kmAm) + Math.max(0, jour.kmPm)).toFixed(1)}</strong>
+                            </td>
                             <td>{heures.heuresRegulieres != null ? heures.heuresRegulieres.toFixed(2) : "—"}</td>
                             <td>{heures.vad != null ? heures.vad.toFixed(2) : "—"}</td>
                             <td><strong>{heures.heuresAPayer != null ? heures.heuresAPayer.toFixed(2) : "—"}</strong></td>
