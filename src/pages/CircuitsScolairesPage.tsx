@@ -208,7 +208,10 @@ function typeCourt(mime: string) {
 
 function formatHeureSamsara(value: string | null) {
   if (!value) return "—";
-  const d = new Date(value);
+  const valeurIso = value
+    .replace(" ", "T")
+    .replace(/([+-]\d{2})$/, "$1:00");
+  const d = new Date(valeurIso);
   if (Number.isNaN(d.getTime())) return "—";
   return new Intl.DateTimeFormat("fr-CA", {
     timeZone: "America/Toronto",
@@ -236,7 +239,7 @@ function arrondirQuartHeureDecimal(heures: number) {
 }
 
 function minutesDepuisHeureChamp(value: string) {
-  const match = /^(\\d{1,2}):(\\d{2})$/.exec(value.trim());
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
   if (!match) return null;
   const heures = Number(match[1]);
   const minutes = Number(match[2]);
