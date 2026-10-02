@@ -60,6 +60,9 @@ type CircuitScolaire = {
   arriveePmPlanifie: string;
   vad: number;
   heuresTotalPaye: number | null;
+  profilRhAccepte: boolean;
+  profilRhAccepteLe: string | null;
+  profilRhAcceptePar: string;
   documents: CircuitDocument[];
 };
 
@@ -159,6 +162,9 @@ const circuitVide: Omit<CircuitScolaire, "id"> = {
   arriveePmPlanifie: "",
   vad: 0.25,
   heuresTotalPaye: null,
+  profilRhAccepte: false,
+  profilRhAccepteLe: null,
+  profilRhAcceptePar: "",
   documents: [],
 };
 
@@ -673,6 +679,9 @@ export default function CircuitsScolairesPage() {
           arrivee_pm_planifie,
           vad,
           heures_total_paye,
+          profil_rh_accepte,
+          profil_rh_accepte_le,
+          profil_rh_accepte_par,
           circuits_scolaires_documents (
             id,
             circuit_id,
@@ -712,6 +721,9 @@ export default function CircuitsScolairesPage() {
         arriveePmPlanifie: item.arrivee_pm_planifie || "",
         vad: item.vad == null ? 0.25 : Number(item.vad),
         heuresTotalPaye: item.heures_total_paye == null ? null : Number(item.heures_total_paye),
+        profilRhAccepte: item.profil_rh_accepte === true,
+        profilRhAccepteLe: item.profil_rh_accepte_le ?? null,
+        profilRhAcceptePar: item.profil_rh_accepte_par ?? "",
 
         documents:
           (
@@ -1527,6 +1539,9 @@ export default function CircuitsScolairesPage() {
       arriveePmPlanifie: circuit.arriveePmPlanifie,
       vad: circuit.vad ?? 0.25,
       heuresTotalPaye: circuit.heuresTotalPaye,
+      profilRhAccepte: circuit.profilRhAccepte,
+      profilRhAccepteLe: circuit.profilRhAccepteLe,
+      profilRhAcceptePar: circuit.profilRhAcceptePar,
 
       documents:
         circuit.documents || [],
@@ -1540,9 +1555,11 @@ export default function CircuitsScolairesPage() {
     void chargerAnalyseSamsara(circuit.id, mondayIso(0));
     void chargerAttentesSamsara(circuit.id);
 
-    // Complète automatiquement le profil depuis les journées régulières.
-    // Les valeurs déjà enregistrées/manuellement corrigées ne sont pas écrasées.
-    void analyserProfilCircuit(circuit.id, true);
+    // Complète automatiquement seulement les profils non acceptés.
+    // Un profil accepté reste figé jusqu'à ce qu'on clique sur Modifier.
+    if (!circuit.profilRhAccepte) {
+      void analyserProfilCircuit(circuit.id, true);
+    }
   }
 
   function fermerModalCircuit() {
@@ -1645,6 +1662,81 @@ export default function CircuitsScolairesPage() {
     }
   }
 
+
+  async function definirAcceptationProfilRh(accepte: boolean) {
+    if (!circuitActifId) return;
+
+    if (accepte) {
+      if (
+        circuitForm.kmCircuit == null ||
+        circuitForm.nombreHeures == null ||
+        !circuitForm.departAmPlanifie ||
+        !circuitForm.arriveeAmPlanifie ||
+        !circuitForm.departPmPlanifie ||
+        !circuitForm.arriveePmPlanifie
+      ) {
+        alert("Le profil doit être complet avant de pouvoir être accepté pour RH.");
+        return;
+      }
+    }
+
+    try {
+      setOperationEnCours(true);
+
+      let acceptePar = "";
+      if (accepte) {
+        try {
+          const { data } = await circuitSupabase.auth.getUser();
+          acceptePar = data.user?.email ?? "";
+        } catch {
+          acceptePar = "";
+        }
+      }
+
+      const accepteLe = accepte ? new Date().toISOString() : null;
+
+      const { error } = await circuitSupabase
+        .from("circuits_scolaires")
+        .update({
+          profil_rh_accepte: accepte,
+          profil_rh_accepte_le: accepteLe,
+          profil_rh_accepte_par: accepte ? acceptePar || null : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", circuitActifId);
+
+      if (error) throw error;
+
+      setCircuitForm((prev) => ({
+        ...prev,
+        profilRhAccepte: accepte,
+        profilRhAccepteLe: accepteLe,
+        profilRhAcceptePar: accepte ? acceptePar : "",
+      }));
+
+      setCircuits((prev) =>
+        prev.map((item) =>
+          item.id === circuitActifId
+            ? {
+                ...item,
+                profilRhAccepte: accepte,
+                profilRhAccepteLe: accepteLe,
+                profilRhAcceptePar: accepte ? acceptePar : "",
+              }
+            : item
+        )
+      );
+
+      if (!accepte) {
+        setVadEdition(false);
+      }
+    } catch (error: any) {
+      console.error("Erreur acceptation profil RH", error);
+      alert(error?.message || "Impossible de modifier l’état d’acceptation du profil.");
+    } finally {
+      setOperationEnCours(false);
+    }
+  }
 
   async function analyserProfilCircuit(
     circuitIdForce?: string,
@@ -2157,6 +2249,9 @@ export default function CircuitsScolairesPage() {
                 circuitForm.nombreHeures == null
                   ? null
                   : Number((circuitForm.nombreHeures + (Number.isFinite(circuitForm.vad) ? circuitForm.vad : 0.25)).toFixed(2)),
+              profil_rh_accepte: circuitForm.profilRhAccepte,
+              profil_rh_accepte_le: circuitForm.profilRhAccepte ? circuitForm.profilRhAccepteLe : null,
+              profil_rh_accepte_par: circuitForm.profilRhAccepte ? circuitForm.profilRhAcceptePar || null : null,
 
               updated_at:
                 new Date().toISOString(),
@@ -2204,6 +2299,9 @@ export default function CircuitsScolairesPage() {
                 circuitForm.nombreHeures == null
                   ? null
                   : Number((circuitForm.nombreHeures + (Number.isFinite(circuitForm.vad) ? circuitForm.vad : 0.25)).toFixed(2)),
+              profil_rh_accepte: circuitForm.profilRhAccepte,
+              profil_rh_accepte_le: circuitForm.profilRhAccepte ? circuitForm.profilRhAccepteLe : null,
+              profil_rh_accepte_par: circuitForm.profilRhAccepte ? circuitForm.profilRhAcceptePar || null : null,
             })
             .select("id")
             .single();
@@ -4014,6 +4112,13 @@ export default function CircuitsScolairesPage() {
                 borderTop: "1px solid #e5e7eb",
                 display: "grid",
                 gap: 12,
+                padding: 16,
+                borderRadius: 14,
+                background: circuitForm.profilRhAccepte ? "#f1f5f9" : "#ffffff",
+                border: circuitForm.profilRhAccepte
+                  ? "1px solid #cbd5e1"
+                  : "1px solid #e5e7eb",
+                opacity: circuitForm.profilRhAccepte ? 0.78 : 1,
               }}
             >
               <div
@@ -4034,15 +4139,54 @@ export default function CircuitsScolairesPage() {
                   </div>
                 </div>
 
-                <button
-                  className="btn-primary"
-                  type="button"
-                  disabled={!circuitActifId || analyseProfilEnCours}
-                  onClick={() => void analyserProfilCircuit()}
-                  title={!circuitActifId ? "Enregistre d’abord le circuit" : "Analyser les journées régulières récentes"}
-                >
-                  {analyseProfilEnCours ? "Analyse…" : "Analyser"}
-                </button>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {circuitForm.profilRhAccepte ? (
+                    <>
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          padding: "7px 10px",
+                          borderRadius: 999,
+                          background: "#e2e8f0",
+                          color: "#334155",
+                          fontSize: 12,
+                          fontWeight: 900,
+                        }}
+                      >
+                        ✓ Accepté pour RH
+                      </span>
+                      <button
+                        className="btn"
+                        type="button"
+                        disabled={operationEnCours}
+                        onClick={() => void definirAcceptationProfilRh(false)}
+                      >
+                        Modifier
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="btn"
+                        type="button"
+                        disabled={!circuitActifId || analyseProfilEnCours || operationEnCours}
+                        onClick={() => void analyserProfilCircuit()}
+                        title={!circuitActifId ? "Enregistre d’abord le circuit" : "Analyser les journées régulières récentes"}
+                      >
+                        {analyseProfilEnCours ? "Analyse…" : "Analyser"}
+                      </button>
+                      <button
+                        className="btn-primary"
+                        type="button"
+                        disabled={!circuitActifId || analyseProfilEnCours || operationEnCours}
+                        onClick={() => void definirAcceptationProfilRh(true)}
+                      >
+                        Accepter
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
 
               <div
@@ -4060,6 +4204,7 @@ export default function CircuitsScolairesPage() {
                     min={0}
                     step={0.1}
                     value={circuitForm.kmCircuit ?? ""}
+                    disabled={circuitForm.profilRhAccepte}
                     onChange={(e) =>
                       setCircuitForm((prev) => ({
                         ...prev,
@@ -4077,6 +4222,7 @@ export default function CircuitsScolairesPage() {
                     min={0}
                     step={0.25}
                     value={circuitForm.nombreHeures ?? ""}
+                    disabled={circuitForm.profilRhAccepte}
                     onChange={(e) => {
                       const nombreHeures = e.target.value === "" ? null : Number(e.target.value);
                       setCircuitForm((prev) => ({
@@ -4099,8 +4245,11 @@ export default function CircuitsScolairesPage() {
                     min={0}
                     step={0.25}
                     value={circuitForm.vad}
+                    disabled={circuitForm.profilRhAccepte}
                     readOnly={!vadEdition}
-                    onDoubleClick={() => setVadEdition(true)}
+                    onDoubleClick={() => {
+                      if (!circuitForm.profilRhAccepte) setVadEdition(true);
+                    }}
                     onFocus={() => {
                       if (!vadEdition) return;
                     }}
@@ -4159,6 +4308,7 @@ export default function CircuitsScolairesPage() {
                       className="input"
                       type="time"
                       value={String(circuitForm[key as "departAmPlanifie" | "arriveeAmPlanifie" | "departPmPlanifie" | "arriveePmPlanifie"] ?? "")}
+                      disabled={circuitForm.profilRhAccepte}
                       onChange={(e) => {
                         const value = e.target.value;
                         setCircuitForm((prev) => {
@@ -4187,6 +4337,22 @@ export default function CircuitsScolairesPage() {
 
               <div className="muted" style={{ fontSize: 12 }}>
                 Nombre d’heures : les durées sont arrondies au 0,25 h. Une durée plus élevée est retenue comme récurrente lorsqu’elle apparaît au moins 3 fois et dans au moins 35 % des journées régulières retenues. Si un nouveau régime d’heures ou de KM devient récurrent dans les journées les plus récentes, l’ancien historique est écarté.
+              </div>
+
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  background: circuitForm.profilRhAccepte ? "#e2e8f0" : "#fffbeb",
+                  border: circuitForm.profilRhAccepte ? "1px solid #cbd5e1" : "1px solid #fde68a",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: circuitForm.profilRhAccepte ? "#334155" : "#92400e",
+                }}
+              >
+                {circuitForm.profilRhAccepte
+                  ? `Profil corroboré pour RH${circuitForm.profilRhAcceptePar ? ` par ${circuitForm.profilRhAcceptePar}` : ""}${circuitForm.profilRhAccepteLe ? ` · ${new Date(circuitForm.profilRhAccepteLe).toLocaleString("fr-CA")}` : ""}. Clique sur « Modifier » pour le déverrouiller et l’analyser de nouveau.`
+                  : "Profil non accepté : RH doit l’ignorer jusqu’à ce qu’une personne clique sur « Accepter »."}
               </div>
             </div>
 
