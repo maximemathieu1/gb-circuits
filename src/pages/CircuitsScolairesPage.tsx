@@ -43,6 +43,16 @@ function normaliserNumeroCircuit(value: string) {
   return normaliserAffectation(value).replace(/^0+(?=\d)/, "");
 }
 
+function estCircuitReserveOuSpare(value: string) {
+  const normalise = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+
+  return normalise.includes("SPARE") || normalise.includes("RESERVE");
+}
+
 type CircuitScolaire = {
   id: string;
   circuit: string;
@@ -3146,20 +3156,24 @@ export default function CircuitsScolairesPage() {
                         Vérifié
                       </div>
                       <div style={{ fontWeight: 700 }}>
-                        <span
-                          title={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
-                          aria-label={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
-                          style={{
-                            display: "inline-block",
-                            width: 12,
-                            height: 12,
-                            borderRadius: "50%",
-                            background: item.profilRhAccepte ? "#16a34a" : "#f59e0b",
-                            boxShadow: item.profilRhAccepte
-                              ? "0 0 0 3px rgba(22,163,74,.14)"
-                              : "0 0 0 3px rgba(245,158,11,.14)",
-                          }}
-                        />
+                        {estCircuitReserveOuSpare(item.circuit) ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          <span
+                            title={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
+                            aria-label={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
+                            style={{
+                              display: "inline-block",
+                              width: 12,
+                              height: 12,
+                              borderRadius: "50%",
+                              background: item.profilRhAccepte ? "#16a34a" : "#f59e0b",
+                              boxShadow: item.profilRhAccepte
+                                ? "0 0 0 3px rgba(22,163,74,.14)"
+                                : "0 0 0 3px rgba(245,158,11,.14)",
+                            }}
+                          />
+                        )}
                       </div>
                     </div>
 
@@ -3416,20 +3430,24 @@ export default function CircuitsScolairesPage() {
                     </td>
 
                     <td style={{ textAlign: "center" }}>
-                      <span
-                        title={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
-                        aria-label={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
-                        style={{
-                          display: "inline-block",
-                          width: 12,
-                          height: 12,
-                          borderRadius: "50%",
-                          background: item.profilRhAccepte ? "#16a34a" : "#f59e0b",
-                          boxShadow: item.profilRhAccepte
-                            ? "0 0 0 3px rgba(22,163,74,.14)"
-                            : "0 0 0 3px rgba(245,158,11,.14)",
-                        }}
-                      />
+                      {estCircuitReserveOuSpare(item.circuit) ? (
+                        <span className="muted">—</span>
+                      ) : (
+                        <span
+                          title={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
+                          aria-label={item.profilRhAccepte ? "Circuit vérifié" : "Circuit non vérifié"}
+                          style={{
+                            display: "inline-block",
+                            width: 12,
+                            height: 12,
+                            borderRadius: "50%",
+                            background: item.profilRhAccepte ? "#16a34a" : "#f59e0b",
+                            boxShadow: item.profilRhAccepte
+                              ? "0 0 0 3px rgba(22,163,74,.14)"
+                              : "0 0 0 3px rgba(245,158,11,.14)",
+                          }}
+                        />
+                      )}
                     </td>
 
                     <td>
