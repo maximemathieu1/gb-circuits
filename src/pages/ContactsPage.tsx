@@ -58,7 +58,6 @@ type ConducteurAffiche = {
   nom: string;
   telephone: string;
   compagnie: Compagnie;
-  actif: boolean;
   circuits: string[];
   unites: string[];
 };
@@ -206,9 +205,6 @@ export default function ContactsPage() {
   const [filtreConducteur, setFiltreConducteur] = useState<
     "Tous" | "Remplaçants"
   >("Tous");
-  const [filtreStatutConducteur, setFiltreStatutConducteur] = useState<
-    "Actifs" | "Inactifs" | "Tous"
-  >("Actifs");
 
 
   const [modalOuvert, setModalOuvert] = useState(false);
@@ -320,16 +316,12 @@ export default function ContactsPage() {
     const q = normalize(recherche);
 
     return contacts
+      .filter((contact) => contact.actif)
       .filter(
         (contact) =>
           contact.typeContact === "Conducteur" ||
           contact.typeContact === "Conducteur remplaçant",
       )
-      .filter((contact) => {
-        if (filtreStatutConducteur === "Tous") return true;
-        if (filtreStatutConducteur === "Inactifs") return !contact.actif;
-        return contact.actif;
-      })
       .filter((contact) => {
         if (
           filtreConducteur === "Remplaçants" &&
@@ -374,7 +366,6 @@ export default function ContactsPage() {
           nom: contact.nom,
           telephone: contact.telephone,
           compagnie,
-          actif: contact.actif,
           circuits: [
             ...new Set(
               circuitsLies
@@ -416,7 +407,6 @@ export default function ContactsPage() {
     circuitsConducteurs,
     compagniesSelectionnees,
     filtreConducteur,
-    filtreStatutConducteur,
     recherche,
   ]);
 
@@ -860,61 +850,6 @@ export default function ContactsPage() {
                 Remplaçants
               </button>
             </div>
-
-            <div
-              style={{
-                display: "flex",
-                gap: 7,
-                alignItems: "center",
-                flexWrap: "wrap",
-              }}
-            >
-              <strong
-                style={{
-                  color: "#667085",
-                  fontSize: 13,
-                  marginRight: 2,
-                }}
-              >
-                État
-              </strong>
-
-              <button
-                type="button"
-                style={filterButtonStyle(
-                  filtreStatutConducteur === "Actifs",
-                )}
-                onClick={() =>
-                  setFiltreStatutConducteur("Actifs")
-                }
-              >
-                Actifs
-              </button>
-
-              <button
-                type="button"
-                style={filterButtonStyle(
-                  filtreStatutConducteur === "Inactifs",
-                )}
-                onClick={() =>
-                  setFiltreStatutConducteur("Inactifs")
-                }
-              >
-                Inactifs
-              </button>
-
-              <button
-                type="button"
-                style={filterButtonStyle(
-                  filtreStatutConducteur === "Tous",
-                )}
-                onClick={() =>
-                  setFiltreStatutConducteur("Tous")
-                }
-              >
-                Tous
-              </button>
-            </div>
           </div>
         )}
 
@@ -1075,40 +1010,15 @@ export default function ContactsPage() {
                     cursor: "pointer",
                   }}
                 >
-                  <div
+                  <strong
                     style={{
                       minWidth: 0,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 7,
-                      flexWrap: "wrap",
+                      fontSize: 15,
+                      lineHeight: 1.25,
                     }}
                   >
-                    <strong
-                      style={{
-                        minWidth: 0,
-                        fontSize: 15,
-                        lineHeight: 1.25,
-                      }}
-                    >
-                      {conducteur.nom}
-                    </strong>
-                    {!conducteur.actif && (
-                      <span
-                        style={{
-                          display: "inline-flex",
-                          padding: "2px 7px",
-                          borderRadius: 999,
-                          background: "#fef3f2",
-                          color: "#b42318",
-                          fontSize: 11,
-                          fontWeight: 800,
-                        }}
-                      >
-                        Inactif
-                      </span>
-                    )}
-                  </div>
+                    {conducteur.nom}
+                  </strong>
 
                   {conducteur.telephone ? (
                     <a
@@ -1174,31 +1084,7 @@ export default function ContactsPage() {
                       title="Double-clic pour modifier la fiche conducteur"
                     >
                       <td>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 7,
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          <strong>{conducteur.nom}</strong>
-                          {!conducteur.actif && (
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                padding: "3px 7px",
-                                borderRadius: 999,
-                                background: "#fef3f2",
-                                color: "#b42318",
-                                fontSize: 11,
-                                fontWeight: 800,
-                              }}
-                            >
-                              Inactif
-                            </span>
-                          )}
-                        </div>
+                        <strong>{conducteur.nom}</strong>
                       </td>
                       <td>{conducteur.compagnie}</td>
                       <td>
@@ -1750,7 +1636,7 @@ export default function ContactsPage() {
                     }))
                   }
                 />
-                {onglet === "conducteurs" ? "Conducteur actif" : "Contact actif"}
+                Contact actif
               </label>
             </div>
 
