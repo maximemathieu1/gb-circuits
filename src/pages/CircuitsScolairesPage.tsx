@@ -1732,9 +1732,41 @@ export default function CircuitsScolairesPage() {
       const accepteLe = accepte ? new Date().toISOString() : null;
       const updatedAt = new Date().toISOString();
 
+      // IMPORTANT :
+      // Quand on accepte le profil RH, on sauvegarde EN MÊME TEMPS toutes
+      // les valeurs actuellement visibles dans le formulaire.
+      //
+      // Avant ce correctif, "Accepter" ne sauvegardait que le drapeau
+      // profil_rh_accepte. Donc une analyse faite dans le formulaire pouvait
+      // sembler acceptée, puis revenir vide après fermeture/réouverture si
+      // l'utilisateur n'avait pas aussi cliqué sur "Enregistrer".
+      const heuresTotalPaye =
+        circuitForm.nombreHeures == null
+          ? null
+          : Number(
+              (
+                circuitForm.nombreHeures +
+                (Number.isFinite(circuitForm.vad) ? circuitForm.vad : 0.25)
+              ).toFixed(2)
+            );
+
+      const donneesProfil = accepte
+        ? {
+            km_circuit: circuitForm.kmCircuit,
+            nombre_heures: circuitForm.nombreHeures,
+            depart_am_planifie: circuitForm.departAmPlanifie || null,
+            arrivee_am_planifie: circuitForm.arriveeAmPlanifie || null,
+            depart_pm_planifie: circuitForm.departPmPlanifie || null,
+            arrivee_pm_planifie: circuitForm.arriveePmPlanifie || null,
+            vad: Number.isFinite(circuitForm.vad) ? circuitForm.vad : 0.25,
+            heures_total_paye: heuresTotalPaye,
+          }
+        : {};
+
       const { error } = await circuitSupabase
         .from("circuits_scolaires")
         .update({
+          ...donneesProfil,
           profil_rh_accepte: accepte,
           profil_rh_accepte_le: accepteLe,
           profil_rh_accepte_par: accepte ? acceptePar || null : null,
@@ -1785,6 +1817,18 @@ export default function CircuitsScolairesPage() {
           item.id === circuitActifId
             ? {
                 ...item,
+                ...(accepte
+                  ? {
+                      kmCircuit: circuitForm.kmCircuit,
+                      nombreHeures: circuitForm.nombreHeures,
+                      departAmPlanifie: circuitForm.departAmPlanifie,
+                      arriveeAmPlanifie: circuitForm.arriveeAmPlanifie,
+                      departPmPlanifie: circuitForm.departPmPlanifie,
+                      arriveePmPlanifie: circuitForm.arriveePmPlanifie,
+                      vad: Number.isFinite(circuitForm.vad) ? circuitForm.vad : 0.25,
+                      heuresTotalPaye,
+                    }
+                  : {}),
                 profilRhAccepte: accepte,
                 profilRhAccepteLe: accepteLe,
                 profilRhAcceptePar: accepte ? acceptePar : "",
