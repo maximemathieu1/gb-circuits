@@ -368,25 +368,24 @@ function jourSamsaraAvecDonnees(jour: CircuitSamsaraJour) {
   );
 }
 
+// Le statut automatique sert uniquement à suggérer une exclusion.
+// Une journée conservée est régulière pour les calculs, quelle que soit
+// l'ancienne valeur des colonnes km_regulier / km_hors_regulier.
+function jourSamsaraExcluEffectif(jour: CircuitSamsaraJour) {
+  return jour.exclue || (
+    (jour.statutManuel === "hors_regulier" || (
+      jour.statutManuel !== "regulier" &&
+      jour.statut.trim().toLocaleLowerCase("fr-CA") === "hors régulier"
+    ))
+  );
+}
+
 function kmRegulierEffectif(jour: CircuitSamsaraJour) {
-  const totalKm = Math.max(0, jour.kmAm) + Math.max(0, jour.kmPm);
-
-  // Si la journée est confirmée régulière manuellement OU automatiquement,
-  // tout le kilométrage AM + PM doit compter comme régulier.
-  if (
-    jour.statutManuel === "regulier" ||
-    (jour.statutManuel == null && jour.statut === "Régulier")
-  ) {
-    return totalKm;
-  }
-
-  return Math.max(0, jour.kmRegulier);
+  return Math.max(0, jour.kmAm) + Math.max(0, jour.kmPm);
 }
 
 function jourSamsaraRegulierConserve(jour: CircuitSamsaraJour) {
-  if (jour.exclue || jour.statutManuel === "hors_regulier") return false;
-  if (jour.statutManuel === "regulier") return true;
-  return jour.statut.trim().toLocaleLowerCase("fr-CA") === "régulier";
+  return !jourSamsaraExcluEffectif(jour);
 }
 
 function jourSamsaraCompletPourMoyenne(jour: CircuitSamsaraJour) {
@@ -400,21 +399,10 @@ function jourSamsaraCompletPourMoyenne(jour: CircuitSamsaraJour) {
 }
 
 function raisonStatutSamsara(jour: CircuitSamsaraJour) {
-  if (jour.exclue) return "Journée exclue des statistiques.";
-  if (jour.statutManuel === "regulier") return "Confirmé régulier manuellement.";
-  if (jour.statutManuel === "hors_regulier") return "Classé hors régulier manuellement.";
-
-  const raison = String(jour.details?.raison_statut ?? "").trim();
-  if (raison) return raison;
-
-  if (jour.statut === "À vérifier") return "Période AM ou PM incomplète.";
-  if (jour.statut === "Hors régulier") return "Écart supérieur à la tolérance de 15 minutes.";
-  if (jour.statut === "Régulier") return "Dans la plage régulière historique.";
-  return "";
-}
-
-function valeurStatutManuel(jour: CircuitSamsaraJour) {
-  return jour.statutManuel ?? "auto";
+  if (jour.exclue) return "Exclue manuellement";
+  if (jour.statutManuel === "regulier") return "Conservée manuellement";
+  if (jourSamsaraExcluEffectif(jour)) return "Exclue suggérée par l’analyse automatique";
+  return "Conservée";
 }
 
 function formatDateSamsara(value: string) {
@@ -1926,16 +1914,17 @@ export default function CircuitsScolairesPage() {
         details: row.details && typeof row.details === "object" ? row.details : {},
         exclue: !!row.exclue,
       }));
-      const reguliers = jours.filter(jourSamsaraCompletPourMoyenne).filter((jour) =>
-        jour.statutManuel === "hors_regulier" ? false :
-        jour.statutManuel === "regulier" ? true :
-        jour.statut === "Régulier" || jour.kmRegulier > 0
+      // Utiliser exactement les mêmes critères que le résumé mensuel.
+      const reguliers = jours.filter((jour) =>
+        jourSamsaraRegulierConserve(jour) && jourSamsaraCompletPourMoyenne(jour)
       );
-      if (!reguliers.length) throw new Error("Aucune journée régulière complète non exclue depuis ce mois.");
+      if (!reguliers.length) throw new Error("Aucune journée conservée et complète depuis ce mois.");
       // Même fenêtre récente que l'analyse du profil : 20 derniers jours admissibles.
       // Les deux calculs restent indépendants des champs non sélectionnés.
       const retenus = reguliers.slice(-20);
-      const kmValeurs = retenus.map(j => j.kmRegulier).filter(k => Number.isFinite(k) && k > 0);
+      // Pour une journée régulière, le kilométrage retenu est AM + PM,
+      // même si km_regulier en base est ancien ou incomplet.
+      const kmValeurs = retenus.map(kmRegulierEffectif).filter(k => Number.isFinite(k) && k > 0);
       const km = kmValeurs.length
         ? Number((kmValeurs.reduce((a,b) => a+b, 0) / kmValeurs.length).toFixed(1)) : null;
       const durees = retenus.map(j => calculHeuresJour(j).heuresRegulieres)
@@ -2066,21 +2055,12 @@ export default function CircuitsScolairesPage() {
       let reguliers = jours
         .filter((jour) => !jour.exclue)
         .filter(jourSamsaraCompletPourMoyenne)
-        .filter((jour) => {
-          // Un statut manuel Hors régulier exclut toujours la journée.
-          if (jour.statutManuel === "hors_regulier") return false;
-          if (jour.statutManuel === "regulier") return true;
-
-          // Pour l'automatique, on accepte soit le libellé Régulier,
-          // soit une journée à laquelle l'analyse a attribué des KM réguliers.
-          // Cela évite de dépendre d'un accent/format exact dans `statut`.
-          return jour.statut === "Régulier" || jour.kmRegulier > 0;
-        })
+        .filter(jourSamsaraRegulierConserve)
         .sort((a, b) => a.date.localeCompare(b.date))
         .slice(-20);
 
       if (reguliers.length === 0) {
-        alert("Aucune journée régulière complète n’est disponible pour établir le profil du circuit.");
+        alert("Aucune journée conservée et complète n’est disponible pour établir le profil du circuit.");
         return;
       }
 
@@ -2112,8 +2092,8 @@ export default function CircuitsScolairesPage() {
         const modeAncienHeures = [...compteurAncienHeures.entries()]
           .sort((a, b) => b[1] - a[1] || b[0] - a[0])[0];
 
-        const kmRecents = recentes.map((jour) => jour.kmRegulier).filter((value) => value > 0);
-        const kmAnciens = anciennes.map((jour) => jour.kmRegulier).filter((value) => value > 0);
+        const kmRecents = recentes.map(kmRegulierEffectif).filter((value) => value > 0);
+        const kmAnciens = anciennes.map(kmRegulierEffectif).filter((value) => value > 0);
         const moyenne = (values: number[]) =>
           values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
         const kmRecentMoyen = moyenne(kmRecents);
@@ -2173,7 +2153,7 @@ export default function CircuitsScolairesPage() {
       }
 
       const kmValues = reguliers
-        .map((jour) => jour.kmRegulier)
+        .map(kmRegulierEffectif)
         .filter((value) => Number.isFinite(value) && value > 0);
       const kmCircuit =
         kmValues.length > 0
@@ -2331,95 +2311,43 @@ export default function CircuitsScolairesPage() {
   }
 
   async function basculerExclusionSamsara(jour: CircuitSamsaraJour) {
+    const etaitExclue = jourSamsaraExcluEffectif(jour);
+    const nouvelleExclusion = !etaitExclue;
+    // Conserver une journée rejetée automatiquement est une décision manuelle
+    // persistante, sinon elle serait rejetée à nouveau au rechargement.
+    const correctionAuto = etaitExclue && !jour.exclue &&
+      jour.statutManuel !== "regulier";
+    const payload: Record<string, unknown> = {
+      exclue: nouvelleExclusion,
+      updated_at: new Date().toISOString(),
+    };
+    if (correctionAuto) payload.statut_manuel = "regulier";
+    if (etaitExclue && jour.exclue && (jour.statutManuel === "hors_regulier" ||
+      jour.statut.trim().toLocaleLowerCase("fr-CA") === "hors régulier")) {
+      payload.statut_manuel = "regulier";
+    }
     const { error } = await circuitSupabase
       .from("circuit_samsara_jours")
-      .update({ exclue: !jour.exclue, updated_at: new Date().toISOString() })
+      .update(payload)
       .eq("id", jour.id);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    setSamsaraJours((prev) =>
-      prev.map((item) =>
-        item.id === jour.id ? { ...item, exclue: !item.exclue } : item
-      )
-    );
-  }
-
-  async function changerStatutSamsara(
-    jour: CircuitSamsaraJour,
-    valeur: "auto" | "regulier" | "hors_regulier"
-  ) {
-    const totalKm = Math.max(0, jour.kmAm) + Math.max(0, jour.kmPm);
-    const details = jour.details || {};
-
-    let statutManuel: "regulier" | "hors_regulier" | null = null;
-    let statut = String(details.auto_statut ?? jour.statut ?? "—");
-    let kmRegulier = Number(details.auto_km_regulier ?? jour.kmRegulier ?? 0);
-    let kmHorsRegulier = Number(details.auto_km_hors_regulier ?? jour.kmHorsRegulier ?? 0);
-
-    if (valeur === "auto" && statut === "Régulier") {
-      // Une journée automatiquement régulière doit toujours compter
-      // l'ensemble du trajet AM + PM comme KM régulier.
-      kmRegulier = totalKm;
-      kmHorsRegulier = 0;
-    }
-
-    if (valeur === "regulier") {
-      statutManuel = "regulier";
-      statut = "Régulier";
-      kmRegulier = totalKm;
-      kmHorsRegulier = 0;
-    } else if (valeur === "hors_regulier") {
-      statutManuel = "hors_regulier";
-      statut = "Hors régulier";
-      kmRegulier = 0;
-      kmHorsRegulier = totalKm;
-    }
-
-    const { error } = await circuitSupabase
-      .from("circuit_samsara_jours")
-      .update({
-        statut_manuel: statutManuel,
-        statut,
-        km_regulier: Number(kmRegulier.toFixed(2)),
-        km_hors_regulier: Number(kmHorsRegulier.toFixed(2)),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", jour.id);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    setSamsaraJours((prev) =>
-      prev.map((item) =>
-        item.id === jour.id
-          ? {
-              ...item,
-              statutManuel,
-              statut,
-              kmRegulier: Number(kmRegulier.toFixed(2)),
-              kmHorsRegulier: Number(kmHorsRegulier.toFixed(2)),
-            }
-          : item
-      )
-    );
+    if (error) { alert(error.message); return; }
+    setSamsaraJours((prev) => prev.map((item) =>
+      item.id === jour.id ? {
+        ...item, exclue: nouvelleExclusion,
+        statutManuel: payload.statut_manuel === "regulier" ? "regulier" : item.statutManuel,
+      } : item
+    ));
   }
 
   const samsaraJoursVisibles = samsaraJours.filter(
-    (jour) => afficherExclues || !jour.exclue
+    (jour) => afficherExclues || !jourSamsaraExcluEffectif(jour)
   );
 
-  const samsaraJoursInclus = samsaraJours.filter((jour) => !jour.exclue);
+  const samsaraJoursInclus = samsaraJours.filter((jour) => !jourSamsaraExcluEffectif(jour));
   const samsaraJoursAvecDonnees = samsaraJoursInclus.filter(jourSamsaraAvecDonnees);
 
-  // Seules les journées conservées comme Régulier ET complètes (AM + PM)
-  // comptent dans les moyennes KM et heures. Hors régulier, exclues et
-  // journées incomplètes restent consultables, sans fausser le résumé.
+  // Toutes les journées conservées et complètes comptent dans les moyennes.
+  // L'analyse automatique propose des exclusions mais ne détermine pas les moyennes.
   const samsaraJoursComplets = samsaraJours.filter(
     (jour) => jourSamsaraRegulierConserve(jour) && jourSamsaraCompletPourMoyenne(jour)
   );
@@ -5009,7 +4937,7 @@ export default function CircuitsScolairesPage() {
                 </div>
 
                 <div className="muted" style={{ fontSize: 12 }}>
-                  Moyennes du mois : journées régulières conservées, complètes (AM et PM) et non exclues seulement. Référence automatique du profil : médiane des 20 dernières journées régulières complètes, avec tolérance de ±15 minutes sur les retours AM/PM. Un statut manuel Régulier ou Hors régulier a priorité. Heures à payer = temps AM + PM, arrondi au 0,25 h, puis +0,25 h de VAD par journée.
+                  Moyennes du mois : journées conservées et complètes (AM et PM) uniquement. Le tri automatique suggère les journées à exclure selon les écarts d’heures (±15 minutes). Coche « Afficher les journées exclues » pour les consulter et, au besoin, les conserver. Heures à payer = temps AM + PM arrondi au 0,25 h, puis VAD.
                 </div>
 
                 <div className="table-wrap">
@@ -5064,7 +4992,7 @@ export default function CircuitsScolairesPage() {
                           const heures = calculHeuresJour(jour);
 
                           return (
-                          <tr key={jour.id} style={jour.exclue ? { opacity: 0.45 } : undefined}>
+                          <tr key={jour.id} style={jourSamsaraExcluEffectif(jour) ? { opacity: 0.6 } : undefined}>
                             <td><strong>{formatDateSamsara(jour.date)}</strong></td>
                             <td>{formatHeureSamsara(jour.departAm)}</td>
                             <td>{formatHeureSamsara(jour.retourAm)}</td>
@@ -5078,44 +5006,16 @@ export default function CircuitsScolairesPage() {
                             <td>{heures.heuresRegulieres != null ? heures.heuresRegulieres.toFixed(2) : "—"}</td>
                             <td>{heures.vad != null ? heures.vad.toFixed(2) : "—"}</td>
                             <td><strong>{heures.heuresAPayer != null ? heures.heuresAPayer.toFixed(2) : "—"}</strong></td>
-                            <td style={{ minWidth: 190 }}>
-                              {jour.exclue ? (
-                                <div>
-                                  <strong>Exclue</strong>
-                                  <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>
-                                    Journée exclue des statistiques.
-                                  </div>
-                                </div>
-                              ) : (
-                                <div style={{ display: "grid", gap: 4 }}>
-                                  <select
-                                    className="input"
-                                    style={{ minWidth: 160, padding: "6px 8px" }}
-                                    value={valeurStatutManuel(jour)}
-                                    onChange={(e) =>
-                                      void changerStatutSamsara(
-                                        jour,
-                                        e.target.value as "auto" | "regulier" | "hors_regulier"
-                                      )
-                                    }
-                                  >
-                                    <option value="auto">Automatique · {jour.statut}</option>
-                                    <option value="regulier">Régulier</option>
-                                    <option value="hors_regulier">Hors régulier</option>
-                                  </select>
-                                  <div className="muted" style={{ fontSize: 11, lineHeight: 1.25 }}>
-                                    {raisonStatutSamsara(jour)}
-                                  </div>
-                                </div>
-                              )}
+                            <td style={{ minWidth: 175 }}>
+                              <strong>{jourSamsaraExcluEffectif(jour) ? "Exclue" : "Conservée"}</strong>
+                              <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>
+                                {raisonStatutSamsara(jour)}
+                              </div>
                             </td>
                             <td>
-                              <button
-                                type="button"
-                                className="btn"
-                                onClick={() => void basculerExclusionSamsara(jour)}
-                              >
-                                {jour.exclue ? "Réinclure" : "Exclure"}
+                              <button type="button" className="btn"
+                                onClick={() => void basculerExclusionSamsara(jour)}>
+                                {jourSamsaraExcluEffectif(jour) ? "Conserver" : "Exclure"}
                               </button>
                             </td>
                           </tr>
@@ -5277,7 +5177,7 @@ export default function CircuitsScolairesPage() {
                   style={{ background: "white", borderRadius: 16, padding: 24,
                     width: "min(640px, 100%)", maxHeight: "90vh", overflowY: "auto" }}>
                   <h3 style={{ marginTop: 0 }}>Mettre à jour le profil du circuit</h3>
-                  <p className="muted">Analyse des journées régulières complètes et non exclues, depuis le mois choisi.
+                  <p className="muted">Analyse des journées conservées et complètes, depuis le mois choisi.
                     Les valeurs actuelles restent inchangées tant que tu ne confirmes pas.</p>
                   <label className="field"><span className="label">À partir du mois</span>
                     <input className="input" type="month" value={majDepuisMois}
