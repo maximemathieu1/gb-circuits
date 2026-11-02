@@ -674,6 +674,17 @@ export default function CircuitsScolairesPage() {
   const [samsaraChargement, setSamsaraChargement] = useState(false);
   const [samsaraSync, setSamsaraSync] = useState(false);
   const [analyseProfilEnCours, setAnalyseProfilEnCours] = useState(false);
+  const [majProfilOuverte, setMajProfilOuverte] = useState(false);
+  const [majDepuisMois, setMajDepuisMois] = useState(moisCourantSamsara());
+  const [majKm, setMajKm] = useState(true);
+  const [majHeures, setMajHeures] = useState(false);
+  const [majEnCours, setMajEnCours] = useState(false);
+  const [majErreur, setMajErreur] = useState("");
+  const [majResultat, setMajResultat] = useState<{
+    km: number | null; heures: number | null; jours: number;
+    departAm: string; arriveeAm: string; departPm: string; arriveePm: string;
+  } | null>(null);
+
   const [vadEdition, setVadEdition] = useState(false);
   const [afficherExclues, setAfficherExclues] = useState(false);
   const [samsaraMois, setSamsaraMois] = useState(moisCourantSamsara());
@@ -1871,6 +1882,142 @@ export default function CircuitsScolairesPage() {
     } finally {
       setOperationEnCours(false);
     }
+  }
+
+  function ouvrirMiseAJourProfil() {
+    setMajDepuisMois(moisCourantSamsara());
+    setMajKm(true);
+    setMajHeures(false);
+    setMajErreur("");
+    setMajResultat(null);
+    setMajProfilOuverte(true);
+  }
+
+  async function previsualiserMiseAJourProfil() {
+    if (!circuitActifId || (!majKm && !majHeures)) return;
+    setMajEnCours(true);
+    setMajResultat(null);
+    setMajErreur("");
+    try {
+      const depuis = /^\d{4}-\d{2}$/.test(majDepuisMois) ? `${majDepuisMois}-01` : "";
+      if (!depuis) throw new Error("Sélectionne un mois valide.");
+      // Pagination : ne pas limiter silencieusement l'analyse aux 60 derniers jours.
+      const rows: any[] = [];
+      for (let debut = 0; ; debut += 500) {
+        const { data, error } = await circuitSupabase.from("circuit_samsara_jours")
+          .select("*").eq("circuit_id", circuitActifId).eq("exclue", false)
+          .gte("date", depuis).order("date", { ascending: true }).range(debut, debut + 499);
+        if (error) throw error;
+        rows.push(...(data ?? []));
+        if (!data || data.length < 500) break;
+      }
+      const jours: CircuitSamsaraJour[] = rows.map((row: any) => ({
+        id: row.id, circuitId: row.circuit_id, date: row.date,
+        samsaraVehicleId: row.samsara_vehicle_id || "",
+        samsaraVehicleName: row.samsara_vehicle_name || "",
+        departAm: row.depart_am, retourAm: row.retour_am,
+        kmAm: Number(row.km_am ?? 0), kmPm: Number(row.km_pm ?? 0),
+        departPm: row.depart_pm, retourPm: row.retour_pm,
+        kmRegulier: Number(row.km_regulier ?? 0),
+        kmHorsRegulier: Number(row.km_hors_regulier ?? 0),
+        statut: row.statut || "—",
+        statutManuel: row.statut_manuel === "regulier" || row.statut_manuel === "hors_regulier"
+          ? row.statut_manuel : null,
+        details: row.details && typeof row.details === "object" ? row.details : {},
+        exclue: !!row.exclue,
+      }));
+      const reguliers = jours.filter(jourSamsaraCompletPourMoyenne).filter((jour) =>
+        jour.statutManuel === "hors_regulier" ? false :
+        jour.statutManuel === "regulier" ? true :
+        jour.statut === "Régulier" || jour.kmRegulier > 0
+      );
+      if (!reguliers.length) throw new Error("Aucune journée régulière complète non exclue depuis ce mois.");
+      // Même fenêtre récente que l'analyse du profil : 20 derniers jours admissibles.
+      // Les deux calculs restent indépendants des champs non sélectionnés.
+      const retenus = reguliers.slice(-20);
+      const kmValeurs = retenus.map(j => j.kmRegulier).filter(k => Number.isFinite(k) && k > 0);
+      const km = kmValeurs.length
+        ? Number((kmValeurs.reduce((a,b) => a+b, 0) / kmValeurs.length).toFixed(1)) : null;
+      const durees = retenus.map(j => calculHeuresJour(j).heuresRegulieres)
+        .filter((v): v is number => v != null);
+      const compte = new Map<number,number>();
+      durees.forEach(v => compte.set(v, (compte.get(v) ?? 0) + 1));
+      const recur = [...compte.entries()].filter(([,n]) => n / durees.length >= 0.35)
+        .map(([h]) => h).sort((a,b) => b-a);
+      const top = [...compte.entries()].sort((a,b) => b[1]-a[1] || b[0]-a[0]);
+      const heures = recur[0] ?? top[0]?.[0] ?? null;
+      if (majKm && km == null) throw new Error("Aucun kilométrage régulier exploitable pour cette période.");
+      if (majHeures && heures == null) throw new Error("Aucune heure exploitable pour cette période.");
+      setMajResultat({
+        km, heures, jours: retenus.length,
+        departAm: moyenneHeuresChamp(retenus.map(j => heureChampDepuisIso(j.departAm)).filter(Boolean)),
+        arriveeAm: moyenneHeuresChamp(retenus.map(j => heureChampDepuisIso(j.retourAm)).filter(Boolean)),
+        departPm: moyenneHeuresChamp(retenus.map(j => heureChampDepuisIso(j.departPm)).filter(Boolean)),
+        arriveePm: moyenneHeuresChamp(retenus.map(j => heureChampDepuisIso(j.retourPm)).filter(Boolean)),
+      });
+    } catch (e: any) {
+      setMajErreur(e?.message || "Impossible de calculer le nouveau profil.");
+    } finally { setMajEnCours(false); }
+  }
+
+  async function confirmerMiseAJourProfil() {
+    if (!circuitActifId || !majResultat || (!majKm && !majHeures)) return;
+    const modifications: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (majKm) modifications.km_circuit = majResultat.km;
+    if (majHeures) {
+      modifications.nombre_heures = majResultat.heures;
+      modifications.heures_total_paye = majResultat.heures == null ? null :
+        Number((majResultat.heures + circuitForm.vad).toFixed(2));
+      modifications.depart_am_planifie = majResultat.departAm || null;
+      modifications.arrivee_am_planifie = majResultat.arriveeAm || null;
+      modifications.depart_pm_planifie = majResultat.departPm || null;
+      modifications.arrivee_pm_planifie = majResultat.arriveePm || null;
+    }
+    setMajEnCours(true);
+    setMajErreur("");
+    try {
+      const { error } = await circuitSupabase.from("circuits_scolaires")
+        .update(modifications).eq("id", circuitActifId);
+      if (error) throw error;
+      // Un profil déjà accepté doit rester cohérent avec les données RH.
+      if (circuitForm.profilRhAccepte) {
+        const { data, error: syncError } = await circuitSupabase.functions.invoke("sync-circuit-rh", {
+          body: { circuit_id: circuitActifId },
+        });
+        if (syncError || data?.success === false) {
+          const avant: Record<string, unknown> = {};
+          if (majKm) avant.km_circuit = circuitForm.kmCircuit;
+          if (majHeures) Object.assign(avant, {
+            nombre_heures: circuitForm.nombreHeures,
+            heures_total_paye: circuitForm.heuresTotalPaye,
+            depart_am_planifie: circuitForm.departAmPlanifie || null,
+            arrivee_am_planifie: circuitForm.arriveeAmPlanifie || null,
+            depart_pm_planifie: circuitForm.departPmPlanifie || null,
+            arrivee_pm_planifie: circuitForm.arriveePmPlanifie || null,
+          });
+          const { error: rollbackError } = await circuitSupabase.from("circuits_scolaires")
+            .update(avant).eq("id", circuitActifId);
+          throw new Error(rollbackError
+            ? "Échec de la synchronisation RH et du retour arrière : vérifie le profil avant de poursuivre."
+            : (data?.error || syncError?.message || "La synchronisation RH a échoué; les anciennes valeurs ont été rétablies."));
+        }
+      }
+      const actualiser = (prev: Omit<CircuitScolaire, "id">): Omit<CircuitScolaire, "id"> => ({
+        ...prev,
+        ...(majKm ? { kmCircuit: majResultat.km } : {}),
+        ...(majHeures ? {
+          nombreHeures: majResultat.heures,
+          heuresTotalPaye: majResultat.heures == null ? null : Number((majResultat.heures + prev.vad).toFixed(2)),
+          departAmPlanifie: majResultat.departAm, arriveeAmPlanifie: majResultat.arriveeAm,
+          departPmPlanifie: majResultat.departPm, arriveePmPlanifie: majResultat.arriveePm,
+        } : {}),
+      });
+      setCircuitForm(actualiser);
+      setCircuits(prev => prev.map(c => c.id === circuitActifId ? { ...c, ...actualiser(c) } : c));
+      setMajProfilOuverte(false);
+      setMajResultat(null);
+    } catch (e: any) { setMajErreur(e?.message || "Mise à jour impossible."); }
+    finally { setMajEnCours(false); }
   }
 
   async function analyserProfilCircuit(
@@ -4346,6 +4493,12 @@ export default function CircuitsScolairesPage() {
                 </div>
 
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <button className="btn" type="button"
+                    disabled={!circuitActifId || operationEnCours || majEnCours}
+                    onClick={ouvrirMiseAJourProfil}
+                    title="Comparer puis mettre à jour le KM, les heures ou les deux"
+                  >Mettre à jour</button>
+
                   {circuitForm.profilRhAccepte ? (
                     <>
                       <span
@@ -5112,6 +5265,62 @@ export default function CircuitsScolairesPage() {
 
                 <div className="muted" style={{ fontSize: 12 }}>
                   Détection quotidienne : seulement les journées régulières, arrêt &gt; {seuilAttenteMinutes} min. Le statut récurrent est calculé ensuite et ne bloque jamais l’affichage dans « Tous ».
+                </div>
+              </div>
+            )}
+
+            {majProfilOuverte && (
+              <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(15,23,42,.55)",
+                display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+                onMouseDown={(e) => e.stopPropagation()}>
+                <div role="dialog" aria-modal="true" aria-label="Mettre à jour le profil"
+                  style={{ background: "white", borderRadius: 16, padding: 24,
+                    width: "min(640px, 100%)", maxHeight: "90vh", overflowY: "auto" }}>
+                  <h3 style={{ marginTop: 0 }}>Mettre à jour le profil du circuit</h3>
+                  <p className="muted">Analyse des journées régulières complètes et non exclues, depuis le mois choisi.
+                    Les valeurs actuelles restent inchangées tant que tu ne confirmes pas.</p>
+                  <label className="field"><span className="label">À partir du mois</span>
+                    <input className="input" type="month" value={majDepuisMois}
+                      disabled={majEnCours} onChange={e => { setMajDepuisMois(e.target.value); setMajResultat(null); }} />
+                  </label>
+                  <div style={{ display: "flex", gap: 20, flexWrap: "wrap", margin: "16px 0" }}>
+                    <label><input type="checkbox" checked={majKm} disabled={majEnCours}
+                      onChange={e => { setMajKm(e.target.checked); setMajResultat(null); }} /> KM</label>
+                    <label><input type="checkbox" checked={majHeures} disabled={majEnCours}
+                      onChange={e => { setMajHeures(e.target.checked); setMajResultat(null); }} /> Heures conducteur</label>
+                  </div>
+                  <button type="button" className="btn-primary" disabled={majEnCours || (!majKm && !majHeures)}
+                    onClick={() => void previsualiserMiseAJourProfil()}>
+                    {majEnCours ? "Traitement…" : "Analyser et comparer"}
+                  </button>
+                  {majErreur && <p style={{ color: "#b91c1c" }} role="alert">{majErreur}</p>}
+                  {majResultat && <div style={{ marginTop: 18 }}>
+                    <div className="muted" style={{ marginBottom: 8 }}>{majResultat.jours} journées retenues (20 dernières admissibles au maximum).</div>
+                    <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                      <thead><tr><th>Valeur</th><th>Actuelle</th><th>Proposée</th></tr></thead>
+                      <tbody>
+                        {majKm && <tr><td>KM circuit</td><td>{circuitForm.kmCircuit ?? "—"} km</td>
+                          <td><strong>{majResultat.km ?? "—"} km</strong></td></tr>}
+                        {majHeures && <>
+                          <tr><td>Heures conducteur</td><td>{circuitForm.nombreHeures ?? "—"} h</td><td><strong>{majResultat.heures ?? "—"} h</strong></td></tr>
+                          <tr><td>Heures payées (VAD inchangé)</td><td>{circuitForm.heuresTotalPaye ?? "—"} h</td>
+                            <td><strong>{majResultat.heures == null ? "—" : (majResultat.heures + circuitForm.vad).toFixed(2)} h</strong></td></tr>
+                          <tr><td>Départ AM</td><td>{circuitForm.departAmPlanifie}</td><td>{majResultat.departAm}</td></tr>
+                          <tr><td>Arrivée AM</td><td>{circuitForm.arriveeAmPlanifie}</td><td>{majResultat.arriveeAm}</td></tr>
+                          <tr><td>Départ PM</td><td>{circuitForm.departPmPlanifie}</td><td>{majResultat.departPm}</td></tr>
+                          <tr><td>Arrivée PM</td><td>{circuitForm.arriveePmPlanifie}</td><td>{majResultat.arriveePm}</td></tr>
+                        </>}
+                      </tbody>
+                    </table>
+                  </div>}
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 24 }}>
+                    <button type="button" className="btn" disabled={majEnCours}
+                      onClick={() => { setMajProfilOuverte(false); setMajResultat(null); }}>Fermer</button>
+                    {majResultat && <button type="button" className="btn-primary" disabled={majEnCours}
+                      onClick={() => void confirmerMiseAJourProfil()}>
+                      {majEnCours ? "Enregistrement…" : "Confirmer la mise à jour"}
+                    </button>}
+                  </div>
                 </div>
               </div>
             )}
