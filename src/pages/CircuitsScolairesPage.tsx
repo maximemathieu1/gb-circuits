@@ -2392,6 +2392,22 @@ export default function CircuitsScolairesPage() {
    * CIRCUIT - ENREGISTRER
    */
 
+  // Met a jour uniquement l'affectation RH (jamais les instantanes de paie).
+  // La fonction serveur valide l'utilisateur et utilise la cle RH cote serveur.
+  async function synchroniserAffectationRh(payload: {
+    circuit_id?: string;
+    circuit?: string;
+    compagnie?: string;
+    supprimer?: boolean;
+  }) {
+    const { data, error } = await circuitSupabase.functions.invoke(
+      "sync-circuit-affectation-rh", { body: payload }
+    );
+    if (error || data?.success !== true) {
+      throw new Error(data?.error || error?.message || "Synchronisation de l'affectation RH impossible.");
+    }
+  }
+
   async function enregistrerCircuit() {
     if (operationEnCours || contactsChargement) return;
     const numero =
@@ -2546,6 +2562,11 @@ export default function CircuitsScolairesPage() {
         );
       }
 
+      // Toute modification de titulaire (y compris Aucun conducteur) est
+      // repercutee dans RH sans toucher aux semaines de paie figees.
+      // Toujours synchroniser: cela rattrape egalement les anciens ecarts.
+      await synchroniserAffectationRh({ circuit_id: circuitId });
+
       if (
         fichiersEnAttente.length > 0
       ) {
@@ -2612,6 +2633,14 @@ export default function CircuitsScolairesPage() {
           throw error;
         }
       }
+
+      // Retirer le lien RH AVANT de supprimer le circuit source.
+      // Si la synchro echoue, on ne supprime pas le circuit.
+      await synchroniserAffectationRh({
+        circuit: circuitForm.circuit.trim(),
+        compagnie: circuitForm.compagnie,
+        supprimer: true,
+      });
 
       const { error } =
         await circuitSupabase
