@@ -383,6 +383,12 @@ function kmRegulierEffectif(jour: CircuitSamsaraJour) {
   return Math.max(0, jour.kmRegulier);
 }
 
+function jourSamsaraRegulierConserve(jour: CircuitSamsaraJour) {
+  if (jour.exclue || jour.statutManuel === "hors_regulier") return false;
+  if (jour.statutManuel === "regulier") return true;
+  return jour.statut.trim().toLocaleLowerCase("fr-CA") === "régulier";
+}
+
 function jourSamsaraCompletPourMoyenne(jour: CircuitSamsaraJour) {
   const amComplet = Boolean(jour.departAm && jour.retourAm);
   const pmComplet = Boolean(jour.departPm && jour.retourPm);
@@ -435,6 +441,22 @@ function mondayIso(offsetWeeks = 0) {
   const diff = day === 0 ? -6 : 1 - day;
   local.setDate(local.getDate() + diff + offsetWeeks * 7);
   return `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, "0")}-${String(local.getDate()).padStart(2, "0")}`;
+}
+
+function moisCourantSamsara() {
+  const pieces = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto", year: "numeric", month: "2-digit",
+  }).formatToParts(new Date());
+  return `${pieces.find((p) => p.type === "year")?.value}-${pieces.find((p) => p.type === "month")?.value}`;
+}
+
+function bornesMoisSamsara(mois: string) {
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(mois);
+  if (!match) throw new Error("Mois Samsara invalide.");
+  const annee = Number(match[1]);
+  const numero = Number(match[2]);
+  const dernierJour = new Date(Date.UTC(annee, numero, 0)).getUTCDate();
+  return { debut: `${mois}-01`, fin: `${mois}-${String(dernierJour).padStart(2, "0")}` };
 }
 
 function fridayFromMonday(monday: string) {
@@ -654,7 +676,7 @@ export default function CircuitsScolairesPage() {
   const [analyseProfilEnCours, setAnalyseProfilEnCours] = useState(false);
   const [vadEdition, setVadEdition] = useState(false);
   const [afficherExclues, setAfficherExclues] = useState(false);
-  const [samsaraSemaine, setSamsaraSemaine] = useState(mondayIso(0));
+  const [samsaraMois, setSamsaraMois] = useState(moisCourantSamsara());
 
   /*
    * CHARGEMENT INITIAL
@@ -1575,9 +1597,9 @@ export default function CircuitsScolairesPage() {
 
     setFichiersEnAttente([]);
     setOngletCircuit("infos");
-    setSamsaraSemaine(mondayIso(0));
+    setSamsaraMois(moisCourantSamsara());
     setModalCircuitOuvert(true);
-    void chargerAnalyseSamsara(circuit.id, mondayIso(0));
+    void chargerAnalyseSamsara(circuit.id, moisCourantSamsara());
     void chargerAttentesSamsara(circuit.id);
 
     // Complète automatiquement seulement les profils non acceptés.
@@ -1609,12 +1631,12 @@ export default function CircuitsScolairesPage() {
 
   async function chargerAnalyseSamsara(
     circuitId: string,
-    semaine = samsaraSemaine
+    mois = samsaraMois
   ) {
     try {
       setSamsaraChargement(true);
 
-      const fin = fridayFromMonday(semaine);
+      const { debut, fin } = bornesMoisSamsara(mois);
 
       const [{ data: configData, error: configError }, { data: joursData, error: joursError }] =
         await Promise.all([
@@ -1627,7 +1649,7 @@ export default function CircuitsScolairesPage() {
             .from("circuit_samsara_jours")
             .select("*")
             .eq("circuit_id", circuitId)
-            .gte("date", semaine)
+            .gte("date", debut)
             .lte("date", fin)
             .order("date", { ascending: true }),
         ]);
@@ -1895,6 +1917,7 @@ export default function CircuitsScolairesPage() {
       }));
 
       let reguliers = jours
+        .filter((jour) => !jour.exclue)
         .filter(jourSamsaraCompletPourMoyenne)
         .filter((jour) => {
           // Un statut manuel Hors régulier exclut toujours la journée.
@@ -2126,8 +2149,9 @@ export default function CircuitsScolairesPage() {
   async function synchroniserSamsara(circuitId?: string) {
     try {
       setSamsaraSync(true);
-      const startDate = circuitId ? samsaraSemaine : mondayIso(0);
-      const endDate = fridayFromMonday(startDate);
+      const { debut: startDate, fin: endDate } = circuitId
+        ? bornesMoisSamsara(samsaraMois)
+        : { debut: mondayIso(0), fin: fridayFromMonday(mondayIso(0)) };
 
       const { data, error } = await circuitSupabase.functions.invoke(
         "circuit-samsara-analyse",
@@ -2146,7 +2170,7 @@ export default function CircuitsScolairesPage() {
       if (data?.ok === false) throw new Error(data?.error || "Synchronisation Samsara impossible.");
 
       if (circuitId) {
-        await chargerAnalyseSamsara(circuitId, startDate);
+        await chargerAnalyseSamsara(circuitId, samsaraMois);
         await chargerAttentesSamsara(circuitId);
       } else {
         alert(`Synchronisation Samsara terminée : ${data?.circuits_updated ?? 0} circuit(s).`);
@@ -2246,12 +2270,11 @@ export default function CircuitsScolairesPage() {
   const samsaraJoursInclus = samsaraJours.filter((jour) => !jour.exclue);
   const samsaraJoursAvecDonnees = samsaraJoursInclus.filter(jourSamsaraAvecDonnees);
 
-  // IMPORTANT :
-  // Les moyennes utilisent seulement les journées COMPLÈTES (AM + PM).
-  // Une journée en cours ou partielle reste visible dans le tableau,
-  // mais elle ne compte pas encore dans KM moyen / jour ni Heures moy. / jour.
-  const samsaraJoursComplets = samsaraJoursInclus.filter(
-    jourSamsaraCompletPourMoyenne
+  // Seules les journées conservées comme Régulier ET complètes (AM + PM)
+  // comptent dans les moyennes KM et heures. Hors régulier, exclues et
+  // journées incomplètes restent consultables, sans fausser le résumé.
+  const samsaraJoursComplets = samsaraJours.filter(
+    (jour) => jourSamsaraRegulierConserve(jour) && jourSamsaraCompletPourMoyenne(jour)
   );
 
   const heuresPayablesIncluses = samsaraJoursComplets
@@ -4096,7 +4119,7 @@ export default function CircuitsScolairesPage() {
                 className={ongletCircuit === "samsara" ? "btn-primary" : "btn"}
                 onClick={() => {
                   setOngletCircuit("samsara");
-                  if (circuitActifId) void chargerAnalyseSamsara(circuitActifId, samsaraSemaine);
+                  if (circuitActifId) void chargerAnalyseSamsara(circuitActifId, samsaraMois);
                 }}
                 disabled={!circuitActifId}
                 title={!circuitActifId ? "Enregistre d’abord le circuit" : "Analyse des heures et kilomètres réels"}
@@ -4769,14 +4792,14 @@ export default function CircuitsScolairesPage() {
                 >
                   <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap" }}>
                     <div className="field">
-                      <div className="label">Semaine du</div>
+                      <div className="label">Mois</div>
                       <input
-                        type="date"
+                        type="month"
                         className="input"
-                        value={samsaraSemaine}
+                        value={samsaraMois}
                         onChange={(e) => {
                           const value = e.target.value;
-                          setSamsaraSemaine(value);
+                          setSamsaraMois(value);
                           if (circuitActifId && value) void chargerAnalyseSamsara(circuitActifId, value);
                         }}
                       />
@@ -4833,7 +4856,7 @@ export default function CircuitsScolairesPage() {
                 </div>
 
                 <div className="muted" style={{ fontSize: 12 }}>
-                  Référence automatique : médiane des 20 dernières journées régulières complètes, avec tolérance de ±15 minutes sur les retours AM/PM. Un statut manuel Régulier ou Hors régulier a priorité. Heures à payer = temps AM + PM, arrondi au 0,25 h, puis +0,25 h de VAD par journée.
+                  Moyennes du mois : journées régulières conservées, complètes (AM et PM) et non exclues seulement. Référence automatique du profil : médiane des 20 dernières journées régulières complètes, avec tolérance de ±15 minutes sur les retours AM/PM. Un statut manuel Régulier ou Hors régulier a priorité. Heures à payer = temps AM + PM, arrondi au 0,25 h, puis +0,25 h de VAD par journée.
                 </div>
 
                 <div className="table-wrap">
@@ -4882,7 +4905,7 @@ export default function CircuitsScolairesPage() {
                       {samsaraChargement ? (
                         <tr><td colSpan={13} className="muted">Chargement Samsara…</td></tr>
                       ) : samsaraJoursVisibles.length === 0 ? (
-                        <tr><td colSpan={13} className="muted">Aucune donnée pour cette semaine. Clique sur « Actualiser ce circuit ».</td></tr>
+                        <tr><td colSpan={13} className="muted">Aucune donnée pour ce mois. Clique sur « Actualiser ce circuit ».</td></tr>
                       ) : (
                         samsaraJoursVisibles.map((jour) => {
                           const heures = calculHeuresJour(jour);
